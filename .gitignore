@@ -1,0 +1,29 @@
+# 密钥与敏感信息
+.env
+*.env
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 大文件（视频等走网盘/群文件）
+*.mp4
+*.mov
+*.zip
