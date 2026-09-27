@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+dist/
+build/
+
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+*.local
+
+# 环境与密钥
+.env
+.env.*
+*.pem
+*.key
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 运行时产物
+*.log
+data/uploads/*
+!data/uploads/.gitkeep
+data/chroma/*
+!data/chroma/.gitkeep
+*.frames/

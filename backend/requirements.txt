@@ -1,0 +1,16 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pydantic>=2.6
+pydantic-settings>=2.2
+langgraph>=0.1.0
+websockets>=12.0
+
+# D3 起启用
+# chromadb>=0.4
+# httpx>=0.27
+
+# 视频感知（D1-D3 可选，P3 本地优先）
+# ultralytics>=8.1
+# opencv-python>=4.9
+# numpy>=1.26
