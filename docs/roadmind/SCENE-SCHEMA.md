@@ -1,52 +1,32 @@
-# SCENE-SCHEMA.md · scene.json 结构 v1（Day1 · P3 主导）
+# SCENE-SCHEMA.md · scene.json 结构 v2（同步组员骨架 models.py）
 
-> 版本：v0.1（2026-09-27）。感知模块输出，供 judge、前端消费。
+> 版本：v2.0（2026-09-28，与 `backend/app/schemas/models.py` 对齐）
+> 感知模块（M1）输出，供判定（M3）、应急（M4）、前端（M6）消费。
 
 ## scene.json 结构
 
 ```json
 {
-  "scene_id": "s_9f3c2",
-  "source": {
-    "video_id": "v_xxx",
-    "fps": 30,
-    "duration_s": 12.5,
-    "resolution": { "width": 1920, "height": 1080 }
-  },
-  "objects": [
+  "scene_id": "case_adf72a071510",
+  "source": "text",
+  "vehicles": [
     {
-      "id": "obj_1",
-      "kind": "vehicle",
-      "category": "car",
+      "id": 1,
+      "type": "car",
       "trajectory": [
-        { "t": 0.0, "x": 40, "y": 60, "w": 8, "h": 12, "speed": 6.5, "heading": 0 }
+        { "t": 0.0, "x": 0.5, "y": 0.7, "speed_kmh": 50.0 }
       ],
-      "keyframes": [2.0, 2.4, 3.0],
-      "confidence": 0.91
+      "max_speed_kmh": 50.0
     }
   ],
   "events": [
-    {
-      "type": "collision",
-      "t": 2.3,
-      "objects": ["obj_1", "obj_2"],
-      "impact_speed": 12.0,
-      "confidence": 0.82
-    }
+    { "time": 12.0, "type": "rear_end", "participants": [1, 2], "keyframe": null }
   ],
-  "scene_factors": {
-    "lighting": "day",
-    "weather": "clear",
-    "road_type": "intersection",
-    "traffic_light": { "present": false, "state": null },
-    "lanes_detected": false,
-    "night": false,
-    "occlusion": false
-  },
-  "confidence": 0.74,
-  "low_confidence": false,
-  "notes": ["可忽略的检测噪声"],
-  "schema_version": "1.0"
+  "road": "urban_intersection",
+  "lane_markings": "dashed",
+  "traffic_light": "unknown",
+  "visibility": "day",
+  "confidence": 0.6
 }
 ```
 
@@ -54,14 +34,15 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| `objects[].kind` | `vehicle` / `pedestrian` / `non_motor` / `other` |
-| `objects[].trajectory` | 时间序列：位置(x,y,w,h)、速度(speed, m/s)、朝向(heading°) |
-| `events[].type` | `collision` / `rapid_brake` / `lane_change` / `red_light` 等 |
-| `scene_factors` | 场景因素，影响判定与置信度 |
+| `source` | 来源：`mock` / `video` / `text` |
+| `vehicles[].type` | `car` / `truck` / `motorcycle` / `bicycle` / `pedestrian` |
+| `vehicles[].trajectory` | 时间序列：时间 t(s)、归一化坐标 x/y(0-1)、速度 speed_kmh |
+| `events[].type` | `collision` / `rear_end` / `vehicle_pedestrian` / `near_miss` / `signal_change` 等 |
+| `events[].participants` | 参与对象的 id 列表 |
+| `road` / `lane_markings` / `traffic_light` / `visibility` | 道路/信号/能见度场景要素 |
 | `confidence` | 场景置信度 0-1，低则触发补录 |
-| `low_confidence` | `true` 时前端转文字/照片补录 |
 
 ## 降级规则
 
-- `confidence < 0.5` 或 `objects` 为空 → `low_confidence = true` → 前端转补录表单。
-- 夜间/遮挡（`night || occlusion`）→ 自动下调 confidence。
+- `confidence` 过低或 `vehicles` 为空 → 前端转**文字补录**，以 `text_description` 重新触发判定。
+- MVP 阶段所有 `source` 为 `text`（由 `services/perception.py` mock 生成）。

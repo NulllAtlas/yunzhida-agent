@@ -1,90 +1,70 @@
 # API.md · 后端接口契约（Day1 · P2 主导 / P1 确认）
 
-> 版本：v0.1（2026-09-27）
-> 语言：REST + WebSocket。Base URL：`/api/v1`。
-> 所有接口已 mock 并联，谁都不等谁。
+> 版本：v0.2（2026-09-28，同步组员骨架）
+> 语言：REST。Base URL：`http://localhost:8000`。
+> MVP 阶段所有服务走 mock（`app/core/config.py` 中 `use_mock=True`），无需真实凭据即可跑通。
 
-## 通用约定
+## 1. 创建案件并启动分析
 
-- 统一错误码结构：`{ "code": 40001, "message": "...", "detail": "..." }`
-- 认证：`Authorization: Bearer <JWT>`（D7 起），车主/交警角色区分。
-- 时间：ISO 8601 UTC。
-
-## 1. 文件上传
-
-`POST /api/v1/upload`
-- multipart/form-data，字段 `file`（视频 mp4/webm/avi），可选 `role`、`scene_note`。
-- 返回：`202` 创建任务
+`POST /api/cases`
+- body（JSON）：
 
 ```json
-{ "task_id": "t_9f3c2", "status": "pending" }
+{ "text_description": "路口我车直行，对方左转弯未让行发生碰撞" }
+```
+
+- 输入方式：`video_id` / `scene_id` / `text_description` 三选一（MVP 用文字描述驱动，前端/感知降级兜底）。
+- 返回 `202` 任务信息：
+
+```json
+{ "task_id": "adf72a071510", "status": "pending", "progress": 0.0 }
 ```
 
 ## 2. 任务状态查询
 
-`GET /api/v1/task/{task_id}`
-- 返回状态流转：`pending → processing → done | failed`
+`GET /api/tasks/{task_id}/status`
+- 状态流转：`pending → perceiving → retrieving → judging → responding → done | failed`
+- 返回：
+
+```json
+{ "task_id": "adf72a071510", "status": "done", "progress": 1.0, "result": { "..." } }
+```
+
+## 3. 任务结果查询
+
+`GET /api/tasks/{task_id}/result`
+- 完成（done/failed）时返回完整结果；处理中返回 `202`。
 
 ```json
 {
-  "task_id": "t_9f3c2",
-  "status": "processing",
-  "stage": "judge",
-  "progress": 0.65,
-  "created_at": "2026-09-27T08:00:00Z"
+  "task_id": "...",
+  "status": "done",
+  "result": {
+    "case_id": "...",
+    "scene": { "...": "见 SCENE-SCHEMA" },
+    "retrieved": [ { "title": "道交法 第43条", "source": "law" } ],
+    "judgment": { "responsibility": { "party_1": "primary", "party_2": "none", "split": "100/0" }, "basis": [], "reasoning": [], "confidence": 0.8 },
+    "response": { "accident_type": "rear_end", "priority": 2, "steps": [], "insurance": "" }
+  }
 }
 ```
 
-## 3. 进度推送（WebSocket）
+## 4. 其它
 
-`WS /api/v1/ws/progress?task_id=t_9f3c2`
-- 服务端推送阶段消息：`upload → perceive → retrieve → judge → respond → done`
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET  | `/health` | 健康检查（返回 `use_mock`） |
+| GET  | `/` | 前端单页（frontend/index.html） |
+| GET  | `/static` | 静态资源 |
 
-```json
-{ "type": "stage", "task_id": "t_9f3c2", "stage": "judge", "progress": 0.65 }
-```
-
-## 4. 结果查询
-
-`GET /api/v1/result/{task_id}`
-- 返回结果对象，含 `scene / judgment / response`（结构见数据契约）。
-
-```json
-{
-  "task_id": "t_9f3c2",
-  "scene": { "...": "见 SCENE-SCHEMA.md" },
-  "judgment": { "...": "见 judgment 契约" },
-  "response": { "...": "见 response 契约" },
-  "created_at": "..."
-}
-```
-
-## 5. 认证（D7 起）
-
-- `POST /api/v1/register`：`{ username, password, role: "owner"|"police" }`
-- `POST /api/v1/login`：`{ username, password }` → `{ token, role }`
-
-## 6. 交警端
-
-- `GET /api/v1/cases`：案件列表（当前用户可见）。
-- `GET /api/v1/case/{id}`：案件详情（scene/judgment/response 全量）。
-- `GET /api/v1/case/{id}/keyframes`：关键帧（P3）。
-- `GET /api/v1/case/{id}/export`：认定书草稿导出。
-
-## 7. 感知服务（P2 调 P3，内部）
-
-- `POST /api/v1/perceive`：视频 → scene.json。
-- `GET /api/v1/perceive/{id}/keyframes`：关键帧图。
-
-## 8. 错误码表（初版）
+## 5. 状态码约定
 
 | code | 含义 |
 | --- | --- |
-| 40000 | 参数错误 |
-| 40001 | 未认证 |
-| 40003 | 无权限 |
-| 40400 | 任务/案件不存在 |
-| 50000 | 内部错误 |
-| 50001 | 视频解析失败 |
-| 50002 | LLM 超时 |
-| 50003 | 场景为空 |
+| 404 | 任务/案件不存在 |
+| 202 | 任务仍在处理（result 未就绪） |
+
+## 说明
+
+- **契约结构**：`scene.json` / `judgment.json` / `response.json` 详细结构见 `SCENE-SCHEMA.md` 与 `CONTRACTS.md`（字段与 `app/schemas/models.py` 一致）。
+- **降级链路**：感知置信低时由前端转文字补录，以 `text_description` 重新触发判定，保证任意输入都能出结果。

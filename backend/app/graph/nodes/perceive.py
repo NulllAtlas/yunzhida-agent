@@ -1,10 +1,13 @@
-from app.graph.state import RoadMindState
-from app.schemas import Scene
-from app.services.mock_data import build_mock_tracking_scene
+"""M1 感知节点：视频/文字 → scene。"""
+from __future__ import annotations
+
+from app.graph.state import State
+from app.services.perception import perception_service
 
 
-async def perceive(state: RoadMindState) -> RoadMindState:
-    """感知节点占位。D6 起调 P3 的 POST /perceive 得到真实 scene。"""
-    scene = build_mock_tracking_scene()
-    state["scene"] = Scene.model_validate(scene).model_dump()
+async def perceive_node(state: State) -> State:
+    state["step"] = "perceiving"
+    state["scene"] = await perception_service.perceive(
+        state.get("case_id", "case"), state.get("input_text")
+    )
     return state

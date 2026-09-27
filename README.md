@@ -13,13 +13,13 @@
 ```
 yunzhida-agent/
 ├── docs/        # 作品说明书、PPT定稿、评审材料归档
-│   └── roadmind/                      # RoadMind 需求/规则/契约/脚本
+│   └── roadmind/                      # RoadMind 方案/架构/分工/契约/脚本
 ├── data/        # 案例库 / 评测集
 │   ├── cases/
 │   └── eval/
 ├── agent/       # MoMA平台侧资产：Prompt设计、工作流编排、配置导出
-├── backend/     # FastAPI + LangGraph 后端（perceive→judge→respond→aggregate）
-├── frontend/    # Vue3 + Vite 前端（车主端 / 交警端）
+├── backend/     # FastAPI + LangGraph 后端（perceive→retrieve→judge→respond→aggregate）
+├── frontend/    # 单页双视角前端（车主端 / 交警端）
 └── .env.example # 环境变量模板（真实.env绝不提交）
 ```
 
@@ -33,17 +33,21 @@ cd yunzhida-agent
 cp .env.example .env   # 然后把群里发的真实 Key 填进 .env
 ```
 
-后端启动见 `backend/README.md`，前端见 `frontend/README.md`。
+后端启动见 `backend/README.md`。MVP 默认 mock，无需凭据即可跑通。
 
 ## 文档索引（RoadMind）
 
 | 文档 | 内容 | 产出自 |
 | --- | --- | --- |
 | `docs/roadmind/REQUIREMENTS.md` | 需求与主流程（Day1） | P1 |
+| `docs/roadmind/ARCHITECTURE.md` | 多智能体架构设计 | P1/P2 |
+| `docs/roadmind/TEAM-ROLES.md` | 分工与 11 天排期 | P1 |
+| `docs/roadmind/TEAM-WORKFLOW.md` | 个人任务流程 | P1 |
+| `docs/roadmind/FEASIBILITY.md` | 可行性评估 | P1 |
 | `docs/roadmind/RULES.md` | 8 类事故规则清单（Day2） | P1 |
-| `docs/roadmind/API.md` | 后端接口契约（Day1） | P2 |
-| `docs/roadmind/SCENE-SCHEMA.md` | scene.json 结构（Day1） | P3 |
-| `docs/roadmind/CONTRACTS.md` | judgment/response 契约（Day1） | P2+P3 |
+| `docs/roadmind/API.md` | 后端接口契约 | P2 |
+| `docs/roadmind/SCENE-SCHEMA.md` | scene.json 结构 | P3 |
+| `docs/roadmind/CONTRACTS.md` | judgment/response 契约 | P2+P3 |
 | `docs/roadmind/RESPONSE-TEMPLATE.md` | 应急步骤模板（Day5） | P1 |
 | `docs/roadmind/DEMO-SCRIPT.md` | 演示脚本（Day9） | P1 |
 
