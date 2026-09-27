@@ -28,6 +28,7 @@ Thumbs.db
 
 # 运行时产物
 *.log
+*.tsbuildinfo
 data/uploads/*
 !data/uploads/.gitkeep
 data/chroma/*
