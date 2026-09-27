@@ -17,12 +17,14 @@ dist/
 # 环境与密钥
 .env
 .env.*
+*.env
 *.pem
 *.key
 
 # IDE / 系统
 .idea/
 .vscode/
+*.swp
 .DS_Store
 Thumbs.db
 
@@ -34,3 +36,8 @@ data/uploads/*
 data/chroma/*
 !data/chroma/.gitkeep
 *.frames/
+
+# 大文件（视频等走网盘/群文件）
+*.mp4
+*.mov
+*.zip
