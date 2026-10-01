@@ -30,7 +30,7 @@ const phase = ref<Phase>('upload')
 const progress = ref(0)
 const aiResult = mockAIResult.data
 
-function startAnalyze(file: File) {
+function startAnalyze() {
   phase.value = 'analyzing'
   progress.value = 0
 

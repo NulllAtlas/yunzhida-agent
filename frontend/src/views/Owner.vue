@@ -1,40 +1,56 @@
-<template>
-  <div class="page">
-    <h1 class="title">👤 我的事故记录</h1>
-    
-    <div class="list">
-      <div v-for="c in cases" :key="c.id" class="item">
-        <img :src="c.img" class="thumb" />
-        <div class="info">
-          <p class="fault">{{ c.result.fault }}</p>
-          <p class="meta">
-            <span>{{ c.time }}</span>
-            <span :class="['badge', c.status]">{{ c.status === 'done' ? '已结案' : '处理中' }}</span>
-          </p>
-        </div>
-      </div>
-    </div>
+<script setup lang="ts">
+import { ref } from 'vue'
+import UploadZone from '../components/UploadZone.vue'
+import ResultCard from '../components/ResultCard.vue'
+import EmergencySteps from '../components/EmergencySteps.vue'
+import type { AIResult } from '../types'
 
-    <button class="btn-back" @click="$router.push('/login')">返回登录</button>
+const result = ref<AIResult | null>(null)
+
+function onUploaded(_file: File, backendResult?: AIResult) {
+  if (backendResult) {
+    result.value = backendResult
+    return
+  }
+  // 后端不通时，回退本地模拟数据（演示不中断）
+  result.value = {
+    fault: '甲方车辆违规变道，与正常直行的乙方车辆发生碰撞',
+    responsibility: '甲方全责',
+    confidence: 88,
+    parties: [
+      { party: '甲方车辆', ratio: 100, reasons: ['压实线变道', '未让直行车辆先行'] },
+      { party: '乙方车辆', ratio: 0, reasons: ['本车道正常直行', '无交通违法行为'] },
+    ],
+    laws: [
+      { clause: '《道路交通安全法实施条例》第四十四条', summary: '变更车道的机动车不得影响相关车道内行驶的机动车的正常行驶。' },
+    ],
+    emergency: [
+      '立即开启双闪（危险报警闪光灯）',
+      '在来车方向 50–100 米外放置三角警示牌',
+      '车上人员全部撤离到护栏外安全地带',
+      '拨打 122 报警并拍照固定现场证据',
+      '如有人员受伤，立即拨打 120',
+    ],
+  }
+}
+</script>
+
+<template>
+  <div class="owner">
+    <h1 class="title">👤 车主端 · 事故智能研判</h1>
+    <UploadZone @uploaded="onUploaded" />
+    <template v-if="result">
+      <ResultCard :result="result" />
+      <EmergencySteps :steps="result.emergency" />
+    </template>
   </div>
 </template>
 
-<script setup lang="ts">
-import { mockCases } from '../mock/cases.mock'
-const cases = mockCases
-</script>
-
 <style scoped>
-.page { max-width: 640px; margin: 0 auto; padding: 24px 20px; }
-.title { text-align: center; color: #1e293b; margin-bottom: 24px; }
-.list { display: flex; flex-direction: column; gap: 16px; }
-.item { display: flex; align-items: center; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; }
-.thumb { width: 80px; height: 60px; object-fit: cover; border-radius: 6px; }
-.info { flex: 1; margin-left: 16px; }
-.fault { font-size: 15px; color: #334155; font-weight: 500; }
-.meta { display: flex; justify-content: space-between; margin-top: 8px; font-size: 13px; color: #94a3b8; align-items: center; }
-.badge { padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-.badge.done { background: #dcfce7; color: #16a34a; }
-.badge.processing { background: #dbeafe; color: #2563eb; }
-.btn-back { display: block; margin: 24px auto 0; padding: 10px 24px; background: #64748b; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
+.owner { max-width: 760px; margin: 0 auto; padding: 20px 16px; }
+.title { text-align: center; color: #1e293b; margin-bottom: 20px; }
+@media (max-width: 768px) {
+  .owner { padding: 12px 10px; }
+  .title { font-size: 20px; }
+}
 </style>
