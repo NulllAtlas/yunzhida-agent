@@ -16,10 +16,11 @@ class Settings(BaseSettings):
     # 是否使用 mock 服务（无真实模型时置 True）
     use_mock: bool = True
 
-    # MoMA / LLM 网关（迭代阶段接入）
-    llm_base_url: str = ""
-    llm_api_key: str = ""
-    llm_model: str = ""
+    # MoMA / LLM 网关（与 .env.example 对齐）
+    moma_api_key: str = ""
+    moma_base_url: str = ""
+    model_fast: str = ""
+    model_strong: str = ""
 
     # 向量库（迭代阶段）
     chroma_dir: str = "./data/chroma"

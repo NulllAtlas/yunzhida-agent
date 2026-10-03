@@ -68,3 +68,10 @@
 
 - **契约结构**：`scene.json` / `judgment.json` / `response.json` 详细结构见 `SCENE-SCHEMA.md` 与 `CONTRACTS.md`（字段与 `app/schemas/models.py` 一致）。
 - **降级链路**：感知置信低时由前端转文字补录，以 `text_description` 重新触发判定，保证任意输入都能出结果。
+- **MoMA 网关（P2，D3）**：`app/services/llm.py` 封装统一 `call_chat()`（OpenAI 兼容网关，带鉴权/超时/重试）。`use_mock=True` 或未配置网关时走规则兜底；`use_mock=False` 且配置 `.env` 后走真实 MoMA。配置字段见 `.env.example`：`MOMA_API_KEY` / `MOMA_BASE_URL` / `MODEL_FAST` / `MODEL_STRONG`。
+- **RAG 入库（P2，D3）**：`app/services/rag.py` 支持 chromadb 向量检索（轻量本地 n-gram embedding，离线可用），不可用时自动降级为关键词检索。法条/案例入库：
+  ```bash
+  cd backend
+  python scripts/index_rules.py                       # 内置规则入库
+  python scripts/index_rules.py --dir ../data/cases   # 从目录 .md 入库
+  ```
