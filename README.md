@@ -19,7 +19,7 @@ yunzhida-agent/
 │   └── eval/
 ├── agent/       # MoMA平台侧资产：Prompt设计、工作流编排、配置导出
 ├── backend/     # FastAPI + LangGraph 后端（perceive→retrieve→judge→respond→aggregate）
-├── frontend/    # 单页双视角前端（车主端 / 交警端）
+├── frontend/    # Vue3 双端前端（车主端 / 交警端）
 └── .env.example # 环境变量模板（真实.env绝不提交）
 ```
 
@@ -45,6 +45,7 @@ cp .env.example .env   # 然后把群里发的真实 Key 填进 .env
 | `docs/roadmind/TEAM-WORKFLOW.md` | 个人任务流程 | P1 |
 | `docs/roadmind/FEASIBILITY.md` | 可行性评估 | P1 |
 | `docs/roadmind/RULES.md` | 8 类事故规则清单（Day2） | P1 |
+| `docs/roadmind/CASES.md` | 典型案例判例库索引（Day3） | P1 |
 | `docs/roadmind/API.md` | 后端接口契约 | P2 |
 | `docs/roadmind/SCENE-SCHEMA.md` | scene.json 结构 | P3 |
 | `docs/roadmind/CONTRACTS.md` | judgment/response 契约 | P2+P3 |
