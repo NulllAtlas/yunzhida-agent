@@ -27,6 +27,7 @@ dist/
 *.swp
 .DS_Store
 Thumbs.db
+.zhanlu/
 
 # 运行时产物
 *.log
