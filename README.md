@@ -46,10 +46,10 @@ cp .env.example .env   # 然后把群里发的真实 Key 填进 .env
 | `docs/roadmind/FEASIBILITY.md` | 可行性评估 | P1 |
 | `docs/roadmind/RULES.md` | 8 类事故规则清单（Day2） | P1 |
 | `docs/roadmind/CASES.md` | 典型案例判例库索引（Day3） | P1 |
+| `docs/roadmind/RESPONSE-TEMPLATE.md` | 应急步骤标准模板（Day5） | P1 |
 | `docs/roadmind/API.md` | 后端接口契约 | P2 |
 | `docs/roadmind/SCENE-SCHEMA.md` | scene.json 结构 | P3 |
 | `docs/roadmind/CONTRACTS.md` | judgment/response 契约 | P2+P3 |
-| `docs/roadmind/RESPONSE-TEMPLATE.md` | 应急步骤模板（Day5） | P1 |
 | `docs/roadmind/DEMO-SCRIPT.md` | 演示脚本（Day9） | P1 |
 
 ## 协作约定
