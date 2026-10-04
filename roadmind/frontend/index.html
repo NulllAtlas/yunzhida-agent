@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RoadMind · 交通事故辅助研判</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Microsoft YaHei", system-ui, sans-serif; background: #f4f6f9; color: #222; }
+    header { background: linear-gradient(135deg, #1a3a6b, #2b5ea7); color: #fff; padding: 18px 24px; }
+    header h1 { font-size: 22px; }
+    header p { font-size: 13px; opacity: .85; margin-top: 4px; }
+    nav { display: flex; gap: 8px; padding: 12px 24px; background: #fff; border-bottom: 1px solid #e3e7ee; }
+    nav button { padding: 8px 16px; border: 1px solid #ccd3de; border-radius: 6px; background: #fff; cursor: pointer; font-size: 14px; }
+    nav button.active { background: #2b5ea7; color: #fff; border-color: #2b5ea7; }
+    main { max-width: 960px; margin: 24px auto; padding: 0 24px; }
+    .card { background: #fff; border: 1px solid #e3e7ee; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+    .card h2 { font-size: 17px; margin-bottom: 12px; }
+    textarea, input[type=text] { width: 100%; padding: 10px; border: 1px solid #ccd3de; border-radius: 6px; font-size: 14px; }
+    textarea { min-height: 90px; resize: vertical; }
+    button.primary { background: #2b5ea7; color: #fff; border: none; padding: 10px 22px; border-radius: 6px; cursor: pointer; font-size: 14px; margin-top: 10px; }
+    button.primary:disabled { opacity: .5; cursor: not-allowed; }
+    .progress { height: 10px; background: #e7ecf3; border-radius: 5px; overflow: hidden; margin-top: 12px; }
+    .progress > div { height: 100%; background: #2b5ea7; width: 0%; transition: width .4s; }
+    .status { font-size: 13px; color: #5a6b85; margin-top: 8px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; margin-right: 6px; }
+    .badge.primary { background: #ffe1e1; color: #b3261e; }
+    .badge.secondary { background: #fff0d6; color: #9a6b0f; }
+    .badge.none { background: #e3f5e6; color: #1c7d33; }
+    ul.steps { list-style: none; }
+    ul.steps li { padding: 8px 0; border-bottom: 1px dashed #e3e7ee; font-size: 14px; }
+    ul.steps li .urgent { color: #b3261e; font-weight: 600; margin-left: 6px; }
+    .hidden { display: none; }
+    .pill { background: #eef2f8; border-radius: 6px; padding: 4px 10px; font-size: 12px; display: inline-block; margin: 2px 4px 2px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>RoadMind · 交通事故辅助研判</h1>
+    <p>多智能体责任判定 + 应急处置方案 ｜ 功能不砍，精度递进（MVP）</p>
+  </header>
+
+  <nav>
+    <button id="tabOwner" class="active">车主端</button>
+    <button id="tabPolice">交警端</button>
+  </nav>
+
+  <main>
+    <!-- 车主端 -->
+    <section id="ownerView">
+      <div class="card">
+        <h2>📹 上传事故信息</h2>
+        <p style="font-size:13px;color:#5a6b85;margin-bottom:10px">MVP 阶段支持文字描述（视频/照片上传将在迭代阶段接通）。</p>
+        <textarea id="ownerText" placeholder="描述事故现场，例如：路口我车直行，对方左转弯未让行发生碰撞。"></textarea>
+        <button class="primary" id="ownerSubmit">开始判定 + 获取应急方案</button>
+        <div class="progress hidden" id="ownerProgress"><div id="ownerProgressBar"></div></div>
+        <div class="status" id="ownerStatus"></div>
+      </div>
+
+      <div class="card hidden" id="ownerResult">
+        <h2>🆘 应急处置</h2>
+        <ul class="steps" id="responseSteps"></ul>
+        <p id="insurance" style="margin-top:10px;font-size:13px;color:#5a6b85"></p>
+
+        <h2 style="margin-top:20px">⚖️ 责任预判</h2>
+        <p id="respText" style="font-size:15px;margin:6px 0"></p>
+        <p id="basisText" style="font-size:13px;color:#5a6b85"></p>
+        <p id="noteText" style="font-size:12px;color:#8a93a6;margin-top:8px"></p>
+      </div>
+    </section>
+
+    <!-- 交警端 -->
+    <section id="policeView" class="hidden">
+      <div class="card">
+        <h2>🔍 责任辅助认定</h2>
+        <p style="font-size:13px;color:#5a6b85;margin-bottom:10px">输入案件描述，输出责任认定建议 + 法条依据 + 证据清单建议。</p>
+        <textarea id="policeText" placeholder="后车追尾前车，前车正常行驶……"></textarea>
+        <button class="primary" id="policeSubmit">生成责任认定建议</button>
+        <div class="progress hidden" id="policeProgress"><div id="policeProgressBar"></div></div>
+        <div class="status" id="policeStatus"></div>
+      </div>
+
+      <div class="card hidden" id="policeResult">
+        <h2>📑 责任认定建议</h2>
+        <p id="policeResp" style="font-size:16px;font-weight:600;margin:8px 0"></p>
+        <h3 style="margin-top:12px">📎 法条依据</h3>
+        <div id="basisList"></div>
+        <h3 style="margin-top:12px">🧠 判定理由</h3>
+        <ul id="reasoningList" style="padding-left:18px;font-size:14px"></ul>
+        <h3 style="margin-top:12px">📚 参考法规 / 案例（RAG）</h3>
+        <div id="retrievedList"></div>
+        <p id="pnoteText" style="font-size:12px;color:#8a93a6;margin-top:8px"></p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const API = "http://localhost:8000";
+
+    // 通用轮询
+    async function poll(taskId, handlers) {
+      for (let i = 0; i < 60; i++) {
+        const res = await fetch(`${API}/api/tasks/${taskId}/status`);
+        const t = await res.json();
+        const pct = Math.round(t.progress * 100);
+        handlers.onProgress(pct, t.status);
+        if (t.status === "done") { handlers.onDone(t); return; }
+        if (t.status === "failed") { handlers.onFail(t); return; }
+        await new Promise(r => setTimeout(r, 400));
+      }
+      handlers.onFail({ error: "timeout" });
+    }
+
+    function renderJudgment(j, policeMode) {
+      const r = j.responsibility;
+      const lbl = { primary: "主责", secondary: "次责", equal: "同责", none: "无责", unknown: "待定" };
+      const txt = `甲方 ${(lbl[r.party_1] || r.party_1)} ／ 乙方 ${(lbl[r.party_2] || r.party_2)}${r.split ? `（${r.split}）` : ""}`;
+      return txt;
+    }
+
+    function renderRetrieved(list) {
+      return (list || []).map(d =>
+        `<span class="pill">${d.title} (${d.source === "law" ? "法规" : "案例"})</span>`
+      ).join("");
+    }
+
+    // 车主端
+    document.getElementById("ownerSubmit").onclick = async () => {
+      const text = document.getElementById("ownerText").value.trim();
+      if (!text) { alert("请描述事故现场"); return; }
+      const prog = document.getElementById("ownerProgress");
+      const progBar = document.getElementById("ownerProgressBar");
+      const status = document.getElementById("ownerStatus");
+      const result = document.getElementById("ownerResult");
+      prog.classList.remove("hidden"); result.classList.add("hidden");
+      const res = await fetch(`${API}/api/cases`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text_description: text }),
+      });
+      const task = await res.json();
+      poll(task.task_id, {
+        onProgress: (pct, s) => {
+          progBar.style.width = pct + "%";
+          status.textContent = `处理中：${s}（${pct}%）`;
+        },
+        onDone: (t) => {
+          prog.classList.add("hidden");
+          status.textContent = "✅ 完成";
+          showOwnerResult(t.result);
+        },
+        onFail: (t) => { status.textContent = "❌ " + (t.error || "失败"); },
+      });
+    };
+
+    function showOwnerResult(result) {
+      document.getElementById("ownerResult").classList.remove("hidden");
+      const steps = document.getElementById("responseSteps");
+      steps.innerHTML = "";
+      (result.response.steps || []).forEach(s => {
+        const li = document.createElement("li");
+        li.innerHTML = `${s.order}. ${s.action}${s.urgent ? '<span class="urgent">[立即]</span>' : ""}`;
+        steps.appendChild(li);
+      });
+      document.getElementById("insurance").textContent = "🛡️ " + (result.response.insurance || "");
+      document.getElementById("respText").textContent = "责任预判：" + renderJudgment(result.judgment);
+      document.getElementById("basisText").textContent = "依据：" + (result.judgment.basis || []).join("；");
+      document.getElementById("noteText").textContent = result.judgment.note || "";
+    }
+
+    // 交警端
+    document.getElementById("policeSubmit").onclick = async () => {
+      const text = document.getElementById("policeText").value.trim();
+      if (!text) { alert("请输入案件描述"); return; }
+      const prog = document.getElementById("policeProgress");
+      const progBar = document.getElementById("policeProgressBar");
+      const status = document.getElementById("policeStatus");
+      const result = document.getElementById("policeResult");
+      prog.classList.remove("hidden"); result.classList.add("hidden");
+      const res = await fetch(`${API}/api/cases`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text_description: text }),
+      });
+      const task = await res.json();
+      poll(task.task_id, {
+        onProgress: (pct, s) => { progBar.style.width = pct + "%"; status.textContent = `处理中：${s}（${pct}%）`; },
+        onDone: (t) => { prog.classList.add("hidden"); status.textContent = "✅ 完成"; showPoliceResult(t.result); },
+        onFail: (t) => { status.textContent = "❌ " + (t.error || "失败"); },
+      });
+    };
+
+    function showPoliceResult(result) {
+      document.getElementById("policeResult").classList.remove("hidden");
+      document.getElementById("policeResp").textContent = renderJudgment(result.judgment);
+      document.getElementById("basisList").innerHTML = (result.judgment.basis || []).map(b => `<div class="pill">${b}</div>`).join("");
+      document.getElementById("reasoningList").innerHTML = (result.judgment.reasoning || []).map(r => `<li>${r}</li>`).join("");
+      document.getElementById("retrievedList").innerHTML = renderRetrieved(result.retrieved);
+      document.getElementById("pnoteText").textContent = result.judgment.note || "";
+    }
+
+    // 双端切换
+    document.getElementById("tabOwner").onclick = () => {
+      document.getElementById("tabOwner").classList.add("active");
+      document.getElementById("tabPolice").classList.remove("active");
+      document.getElementById("ownerView").classList.remove("hidden");
+      document.getElementById("policeView").classList.add("hidden");
+    };
+    document.getElementById("tabPolice").onclick = () => {
+      document.getElementById("tabPolice").classList.add("active");
+      document.getElementById("tabOwner").classList.remove("active");
+      document.getElementById("policeView").classList.remove("hidden");
+      document.getElementById("ownerView").classList.add("hidden");
+    };
+  </script>
+</body>
+</html>

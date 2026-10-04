@@ -1,0 +1,45 @@
+{
+  "$schema": "scene.v1.json",
+  "scene_id": "case_001",
+  "source": "video",
+  "confidence": 0.82,
+  "vehicles": [
+    {
+      "id": 1,
+      "type": "car",
+      "class_conf": 0.91,
+      "max_speed_kmh": 50.0,
+      "bbox_at_collision": {"x": 0.60, "y": 0.68, "w": 0.09, "h": 0.11},
+      "trajectory": [
+        {"t": 0.0,  "x": 0.50, "y": 0.70, "w": 0.08, "h": 0.10, "speed_kmh": 48.0},
+        {"t": 6.0,  "x": 0.55, "y": 0.69, "w": 0.09, "h": 0.11, "speed_kmh": 45.0},
+        {"t": 12.3, "x": 0.60, "y": 0.68, "w": 0.09, "h": 0.11, "speed_kmh": 41.0}
+      ]
+    },
+    {
+      "id": 2,
+      "type": "car",
+      "class_conf": 0.88,
+      "max_speed_kmh": 12.0,
+      "bbox_at_collision": {"x": 0.60, "y": 0.60, "w": 0.09, "h": 0.11},
+      "trajectory": [
+        {"t": 0.0,  "x": 0.55, "y": 0.60, "speed_kmh": 10.0},
+        {"t": 6.0,  "x": 0.58, "y": 0.60, "speed_kmh": 7.0},
+        {"t": 12.3, "x": 0.60, "y": 0.60, "speed_kmh": 5.0}
+      ]
+    }
+  ],
+  "events": [
+    {
+      "time": 12.3,
+      "type": "collision",
+      "participants": [1, 2],
+      "keyframe": "keyframes/case_001_t12.3.jpg",
+      "confidence": 0.85
+    }
+  ],
+  "road": "urban_intersection",
+  "lane_markings": "dashed",
+  "traffic_light": "green",
+  "visibility": "day"
+}
