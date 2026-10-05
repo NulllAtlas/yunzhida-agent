@@ -172,3 +172,59 @@ def test_index_rules_script_runs_standalone():
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     assert "入库完成" in proc.stdout, proc.stdout[-2000:]
+
+
+# ---------------- 视频上传（D1/D2 缺口修复） ----------------
+
+def _upload_dir(tmp_path, monkeypatch):
+    from app.core.config import settings
+
+    target = tmp_path / "uploads"
+    monkeypatch.setattr(settings, "upload_dir", str(target))
+    return target
+
+
+def test_upload_video_then_create_case(client, tmp_path, monkeypatch):
+    """上传视频应真实落盘并返回 video_id，且可直接用于创建案件。"""
+    target = _upload_dir(tmp_path, monkeypatch)
+    payload = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 2048
+
+    resp = client.post("/api/uploads/video", files={"file": ("clip.mp4", payload, "video/mp4")})
+    assert resp.status_code == 201, resp.text
+    data = resp.json()["data"]
+    assert data["video_id"].endswith(".mp4")
+    assert data["size"] == len(payload)
+    assert (target / data["video_id"]).is_file()
+
+    # 该文件不是真实可解码视频 → 抽帧失败自动降级，但任务必须成功
+    task_id = client.post("/api/cases", json={"video_id": data["video_id"]}).json()["task_id"]
+    task = _wait_done(client, task_id)
+    assert task["status"] == "done", task.get("error")
+
+
+def test_upload_video_rejects_non_video(client, tmp_path, monkeypatch):
+    target = _upload_dir(tmp_path, monkeypatch)
+    resp = client.post("/api/uploads/video", files={"file": ("note.txt", b"hello", "text/plain")})
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "INVALID_FILE_TYPE"
+    assert not target.exists() or not any(target.iterdir())
+
+
+def test_upload_video_rejects_oversize(client, tmp_path, monkeypatch):
+    target = _upload_dir(tmp_path, monkeypatch)
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "max_upload_mb", 1)
+    big = b"\x00" * (1024 * 1024 + 16)
+    resp = client.post("/api/uploads/video", files={"file": ("big.mp4", big, "video/mp4")})
+    assert resp.status_code == 413
+    assert resp.json()["code"] == "FILE_TOO_LARGE"
+    assert not list(target.glob("*.mp4")), "超限失败不应留下半个文件"
+
+
+def test_upload_video_rejects_empty(client, tmp_path, monkeypatch):
+    target = _upload_dir(tmp_path, monkeypatch)
+    resp = client.post("/api/uploads/video", files={"file": ("empty.mp4", b"", "video/mp4")})
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "EMPTY_FILE"
+    assert not list(target.glob("*.mp4"))

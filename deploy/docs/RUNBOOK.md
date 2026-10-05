@@ -103,6 +103,7 @@ python scripts/index_rules.py --dir ../data/cases    # 把 data/cases/*.md 解�
 | --- | --- | --- | --- |
 | POST | `/api/auth/register` | 注册（owner / police） | - |
 | POST | `/api/auth/login` | 登录换取 JWT | - |
+| POST | `/api/uploads/video` | 上传视频，返回 `video_id`（201） | - |
 | POST | `/api/cases` | 创建案件，启动多智能体链路（202） | - |
 | GET | `/api/tasks/{id}/status` | 任务状态与进度 | - |
 | GET | `/api/tasks/{id}/result` | 任务结果（处理中返回 202） | - |
@@ -147,6 +148,6 @@ python scripts/index_rules.py --dir ../data/cases    # 把 data/cases/*.md 解�
 - [x] 数据：`data/cases/*.md` 案例（RAG 入库）、`data/eval/eval_v1.json` 评测集
 - [x] 接口文档：`docs/roadmind/API.md`、`docs/roadmind/CONTRACTS.md`
 - [x] 部署：`docker-compose.yml` + `backend/Dockerfile` + `frontend/Dockerfile`
-- [x] 测试：`cd backend && pytest`（26 项，覆盖主链路 / 鉴权 / WS / RAG / 视频分帧 / 网关离线回归）
+- [x] 测试：`cd backend && pytest`（27 项，覆盖主链路 / 鉴权 / 视频上传 / WS / RAG / 视频分帧 / 网关离线回归）
 - [x] 演示说明：本 RUNBOOK
 - [ ] 现场演示环境（P1 彩排时由 P2 起环境）

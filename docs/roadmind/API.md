@@ -18,7 +18,8 @@
 { "code": "TASK_NOT_FOUND", "msg": "任务不存在", "data": null }
 ```
 
-错误码：`VALIDATION_ERROR`(422) / `EMPTY_INPUT`(422) / `USER_EXISTS`(409) /
+错误码：`VALIDATION_ERROR`(422) / `EMPTY_INPUT`(422) / `INVALID_FILE_TYPE`(422) /
+`EMPTY_FILE`(422) / `FILE_TOO_LARGE`(413) / `USER_EXISTS`(409) /
 `BAD_CREDENTIALS`(401) / `UNAUTHORIZED`(401) / `FORBIDDEN`(403) /
 `TASK_NOT_FOUND`(404) / `CASE_NOT_FOUND`(404) / `TASK_PROCESSING`(202) / `INTERNAL_ERROR`(500)。
 
@@ -46,15 +47,29 @@
 
 后续请求带 `Authorization: Bearer <access_token>`。
 
-## 2. 创建案件并启动分析（D1/D2）
+## 2. 视频上传与创建案件（D1/D2）
 
-`POST /api/cases` — **202**
+### `POST /api/uploads/video` — **201**
+
+上传事故视频，落盘到 `UPLOAD_DIR`，返回可作为 `video_id` 的文件名。
+
+- `multipart/form-data`，字段名 `file`；支持 `.mp4/.mov/.avi/.mkv/.webm/.flv/.m4v`。
+- 校验：非视频扩展名 → `INVALID_FILE_TYPE`；空文件 → `EMPTY_FILE`；超过
+  `MAX_UPLOAD_MB`（默认 100）→ `FILE_TOO_LARGE`。落盘用随机文件名，失败不留残文件。
+
+```json
+{ "code": 0, "msg": "ok",
+  "data": { "video_id": "a1b2c3d4e5f6.mp4", "size": 10485760, "content_type": "video/mp4" } }
+```
+
+### `POST /api/cases` — **202**
 
 ```json
 { "text_description": "路口我车直行，对方左转弯未让行发生碰撞" }
 ```
 
-- `video_id`：已上传视频的文件名（需实际存在于服务端 `UPLOAD_DIR`）。提供后感知阶段会按
+- `video_id`：已上传视频的文件名（由上面的 `POST /api/uploads/video` 上传得到，或手动放入
+  `UPLOAD_DIR`）。提供后感知阶段会按
   D8 策略抽样抽帧（大视频不逐帧解码），`scene.source` 变为 `video`，中间关键帧路径写入
   `scene.events[*].keyframe`；抽帧失败则自动回落文字降级，不会让任务失败。
 - 输入三选一：`video_id` / `scene_id` / `text_description`（全空返回 `EMPTY_INPUT`）。
@@ -149,6 +164,6 @@
   python scripts/index_rules.py                       # 内置规则入库
   python scripts/index_rules.py --dir ../data/cases   # 从目录 .md 入库
   ```
-- **P4 联调占位**：`POST /api/upload`、`POST /api/audit` 为前端早期联调的固定返回，保留以免破坏
-  `frontend/src/components/UploadZone.vue` 与 `views/PoliceDetail.vue`；真实链路请走上面的
-  `POST /api/cases` → `GET /api/tasks/{id}/result`。
+- **P4 联调占位**：`POST /api/upload`（单数，图片固定返回）、`POST /api/audit` 为前端早期联调产物，
+  保留以免破坏 `frontend/src/components/UploadZone.vue` 与 `views/PoliceDetail.vue`；**真实视频上传**
+  请用 `POST /api/uploads/video`，再走 `POST /api/cases` → `GET /api/tasks/{id}/result`。

@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app.api import auth_router, cases_router, police_router, progress_router
+from app.api import auth_router, cases_router, police_router, progress_router, uploads_router
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.errors import register_exception_handlers
@@ -40,6 +40,7 @@ register_request_logging(app)
 register_exception_handlers(app)
 
 app.include_router(auth_router)      # D7：注册 / 登录 / JWT
+app.include_router(uploads_router)   # D1/D2：视频上传落盘（返回 video_id）
 app.include_router(cases_router)     # D1/D2：创建案件 / 状态 / 结果 / 指标
 app.include_router(police_router)    # D7：交警端案件列表 / 详情 / 草稿导出
 app.include_router(progress_router)  # D4/D5：WebSocket 进度推送
