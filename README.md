@@ -20,6 +20,8 @@ yunzhida-agent/
 ├── agent/       # MoMA平台侧资产：Prompt设计、工作流编排、配置导出
 ├── backend/     # FastAPI + LangGraph 后端（perceive→retrieve→judge→respond→aggregate）
 ├── frontend/    # Vue3 双端前端（车主端 / 交警端）
+├── deploy/docs/ # 部署与运维文档（RUNBOOK）
+├── docker-compose.yml # 一键容器化部署（api + 前端静态）
 └── .env.example # 环境变量模板（真实.env绝不提交）
 ```
 
@@ -34,6 +36,12 @@ cp .env.example .env   # 然后把群里发的真实 Key 填进 .env
 ```
 
 后端启动见 `backend/README.md`。MVP 默认 mock，无需凭据即可跑通。
+
+容器化一键启动（需 Docker）：
+
+```bash
+docker compose up --build   # 前端 http://localhost:8080 ，后端 http://localhost:8000/docs
+```
 
 ## 文档索引（RoadMind）
 
@@ -51,6 +59,7 @@ cp .env.example .env   # 然后把群里发的真实 Key 填进 .env
 | `docs/roadmind/SCENE-SCHEMA.md` | scene.json 结构 | P3 |
 | `docs/roadmind/CONTRACTS.md` | judgment/response 契约 | P2+P3 |
 | `docs/roadmind/DEMO-SCRIPT.md` | 演示脚本（Day9） | P1 |
+| `deploy/docs/RUNBOOK.md` | 后端部署 / 换模型 / 加规则 / 排障 | P2 |
 
 ## 协作约定
 

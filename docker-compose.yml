@@ -1,0 +1,40 @@
+# RoadMind 一键部署（D9）
+#   启动：docker compose up --build
+#   前端：http://localhost:8080   后端：http://localhost:8000/docs
+#
+# 说明：chromadb 以后端进程内嵌方式运行（PersistentClient），因此无需单独的 rag 容器；
+#      向量库文件落在 api 容器的 /app/data/chroma 卷中。
+services:
+  api:
+    build: ./backend
+    container_name: roadmind-api
+    ports:
+      - "8000:8000"
+    environment:
+      # 无凭据时保持 true，全链路走确定性 mock，可直接演示
+      USE_MOCK: "true"
+      # 接入真实 MoMA 网关时改为 false，并在 .env 中填好下面四项
+      MOMA_API_KEY: "${MOMA_API_KEY:-}"
+      MOMA_BASE_URL: "${MOMA_BASE_URL:-}"
+      MODEL_FAST: "${MODEL_FAST:-}"
+      MODEL_STRONG: "${MODEL_STRONG:-}"
+      MAX_CONCURRENCY: "4"
+      TASK_TIMEOUT_S: "180"
+      JWT_SECRET: "${JWT_SECRET:-roadmind-dev-secret-change-me}"
+      DB_PATH: "/app/data/roadmind.db"
+      CHROMA_DIR: "/app/data/chroma"
+    volumes:
+      - roadmind-data:/app/data
+    restart: unless-stopped
+
+  web:
+    build: ./frontend
+    container_name: roadmind-web
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  roadmind-data:

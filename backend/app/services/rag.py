@@ -1,11 +1,16 @@
 """
 RAG 检索服务（M2）。
 
-MVP 阶段：返回内置法条/案例模板（纯内存），保证链路可用；
-迭代阶段：接入 chromadb 向量库做真实检索。
+- 默认（无 chromadb / 未配置）使用内置法条/案例关键词检索，保证链路可用；
+- chromadb 可用时走持久化向量检索（使用轻量本地 n-gram embedding，
+  无需下载模型，离线可用）。
 """
 from __future__ import annotations
 
+import hashlib
+from typing import Any
+
+from app.core.config import settings
 from app.schemas.models import RetrievedDoc
 
 # 内置规则库（法条要件 + 少量案例种子）
@@ -24,35 +29,152 @@ _LAW_POOL: list[dict] = [
      "content": "转弯车辆未让直行车辆导致碰撞，转弯车负主要责任，直行车辆未尽注意义务负次要责任。"},
 ]
 
+_KEYWORDS = ("追尾", "变道", "路口", "让行", "超速", "灯")
+
+
+def _keyword_retrieve(query: str, top_k: int) -> list[RetrievedDoc]:
+    """基于关键词的简单打分检索（兜底）。"""
+    scored = []
+    for doc in _LAW_POOL:
+        score = 0.0
+        for token in _KEYWORDS:
+            if token in query:
+                if token in doc["content"]:
+                    score += 1.0
+                else:
+                    score += 0.2
+        if score == 0 and ("事故" in query or "碰撞" in query):
+            score = 0.1
+        scored.append((score, doc))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [
+        RetrievedDoc(id=d["id"], title=d["title"], content=d["content"],
+                     source=d["source"], score=s)
+        for s, d in scored[:top_k] if s > 0
+    ]
+
+
+class _NGramEmbedding:
+    """轻量本地 embedding：char n-gram 哈希特征向量，无需下载模型。
+
+    使用 blake2b 定盐哈希，保证同一文本在任何进程 / 任何机器上得到相同向量。
+    （内置 hash() 会按进程随机加盐，导致向量不可复现、检索结果每次不同。）
+    """
+
+    def __init__(self, dim: int = 512) -> None:
+        self.dim = dim
+
+    @staticmethod
+    def name() -> str:
+        """chromadb 要求 embedding function 提供稳定的 name()，用于持久化校验。"""
+        return "roadmind-ngram-512"
+
+    def __call__(self, input: list[str]) -> list[list[float]]:  # noqa: A002
+        return [self._encode(t) for t in input]
+
+    def _encode(self, text: str) -> list[float]:
+        vec = [0.0] * self.dim
+        grams = set()
+        norm = text.lower()
+        for n in (1, 2, 3):
+            for i in range(len(norm) - n + 1):
+                grams.add(norm[i:i + n])
+        for g in grams:
+            digest = hashlib.blake2b(g.encode("utf-8"), digest_size=8).digest()
+            vec[int.from_bytes(digest, "big") % self.dim] += 1.0
+        total = sum(vec) or 1.0
+        return [v / total for v in vec]
+
 
 class RagService:
     def __init__(self) -> None:
         self._pool = _LAW_POOL
+        self._client: Any = None
+        self._collection: Any = None
+        self._try_init_chroma()
+
+    def _try_init_chroma(self) -> None:
+        """尝试初始化 chromadb（失败则保持 None，走关键词兜底）。"""
+        try:
+            import chromadb  # noqa: PLC0415
+            from chromadb.config import Settings as ChromaSettings  # noqa: PLC0415
+
+            self._client = chromadb.PersistentClient(
+                path=settings.chroma_dir,
+                settings=ChromaSettings(anonymized_telemetry=False),
+            )
+            self._collection = self._client.get_or_create_collection(
+                name="roadmind",
+                embedding_function=_NGramEmbedding(),
+            )
+            if self._collection.count() == 0:
+                self._try_seed()
+        except Exception:  # noqa: BLE001
+            self._client = None
+            self._collection = None
+
+    def _try_seed(self) -> None:
+        """首次使用时把内置规则库写入 chromadb（可被 index_rules.py 覆盖扩充）。"""
+        try:
+            self._collection.add(
+                ids=[d["id"] for d in self._pool],
+                documents=[d["content"] for d in self._pool],
+                metadatas=[{"title": d["title"], "source": d["source"]} for d in self._pool],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    def add_docs(self, docs: list[dict]) -> int:
+        """新增/覆盖文档（供 index_rules.py 调用）。id 重复会自动覆盖。"""
+        if self._collection is None:
+            added = 0
+            known = {d["id"] for d in self._pool}
+            for d in docs:
+                if d["id"] not in known:
+                    self._pool.append(d)
+                    known.add(d["id"])
+                    added += 1
+            return added
+        self._collection.upsert(
+            ids=[d["id"] for d in docs],
+            documents=[d["content"] for d in docs],
+            metadatas=[{"title": d["title"], "source": d["source"]} for d in docs],
+        )
+        return len(docs)
+
+    @property
+    def backend(self) -> str:
+        """当前检索引擎：chromadb / keyword（供健康检查与日志使用）。"""
+        return "chromadb" if self._collection is not None else "keyword"
 
     def retrieve(self, query: str, top_k: int = 4) -> list[RetrievedDoc]:
-        """MVP：基于关键词的简单打分检索。迭代阶段替换为向量检索。"""
-        q = query
-        scored = []
-        for doc in self._pool:
-            # 简单字符串包含打分
-            score = 0.0
-            for token in ("追尾", "变道", "路口", "让行", "超速", "灯"):
-                if token in q:
-                    if token in doc["content"]:
-                        score += 1.0
-                    else:
-                        score += 0.2
-            if score == 0 and ("事故" in q or "碰撞" in q):
-                score = 0.1
-            scored.append((score, doc))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [
-            RetrievedDoc(
-                id=d["id"], title=d["title"], content=d["content"],
-                source=d["source"], score=s,
-            )
-            for s, d in scored[:top_k] if s > 0
-        ]
+        """向量检索（chromadb 可用时），否则关键词兜底。"""
+        if self._collection is not None and query:
+            try:
+                res = self._collection.query(
+                    query_texts=[query], n_results=min(top_k, 10),
+                    include=["documents", "metadatas", "distances"],
+                )
+                # 文档 id 在 query 结果的 ids 字段里，metadata 中并不存在 _id，
+                # 之前从 metadata 取 _id 恒为空，导致 id 退化成 "doc-0"。
+                ids = res["ids"][0]
+                docs = res["documents"][0]
+                metas = res["metadatas"][0]
+                dists = res["distances"][0]
+                return [
+                    RetrievedDoc(
+                        id=str(doc_id),
+                        title=meta.get("title", ""),
+                        content=text,
+                        source=meta.get("source", "law"),
+                        score=1.0 - float(dist),
+                    )
+                    for doc_id, text, meta, dist in zip(ids, docs, metas, dists)
+                    if text
+                ]
+            except Exception:  # noqa: BLE001
+                pass
+        return _keyword_retrieve(query, top_k)
 
 
 rag_service = RagService()

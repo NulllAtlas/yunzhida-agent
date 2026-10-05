@@ -32,6 +32,8 @@ Thumbs.db
 # 运行时产物
 *.log
 *.tsbuildinfo
+.pytest_cache/
+data/*.db
 data/uploads/*
 !data/uploads/.gitkeep
 data/chroma/*

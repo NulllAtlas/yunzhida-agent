@@ -24,7 +24,10 @@ async def respond_node(state: State) -> State:
     if accident_type == "general" and ("行人" in text or "撞人" in text):
         accident_type = "vehicle_pedestrian"
 
-    raw = await llm_service.draft_response(accident_type)
+    template = await llm_service.draft_response(accident_type)
+    # D5：非 mock 模式下用 LLM 润色步骤（失败自动原样返回模板，保证步骤不缺失）
+    scene_text = text or (f"{scene.road} {' '.join(e.type for e in scene.events)}" if scene else "")
+    raw = await llm_service.refine_response(accident_type, scene_text, template)
     state["response"] = EmergencyResponse(
         scene_id=state.get("case_id", "case"),
         accident_type=accident_type,

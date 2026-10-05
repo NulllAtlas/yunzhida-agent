@@ -43,11 +43,16 @@ class PerceptionService:
         return scene
 
     async def perceive(self, scene_id: str, text: str | None) -> Scene:
-        """入口：MVP 阶段始终返回 mock 场景。迭代阶段在此接入真实视频检测。"""
-        if settings.use_mock:
-            return self.mock_scene_from_text(scene_id, text or "路口两车碰撞，疑似追尾")
-        # TODO(迭代): 真实视频感知（YOLO 抽帧检测 + 轨迹提取）
-        raise NotImplementedError("真实视频感知待实现")
+        """入口：视频 → 场景（真实检测待 P3 提供 `POST /perceive`）。
+
+        在真实感知接入前，统一走"文字降级"路径：由文字描述生成低置信场景，
+        保证任何输入都能跑完整条链路（对应 TEAM-WORKFLOW 的降级链路要求）。
+        """
+        # TODO(迭代/B): 调用 P3 的 `POST /perceive` 做 YOLO 抽帧检测 + 轨迹提取，
+        #              识别失败时再回落到下面的文字降级路径。
+        scene = self.mock_scene_from_text(scene_id, text or "路口两车碰撞，疑似追尾")
+        scene.confidence = settings.perception_confidence
+        return scene
 
 
 perception_service = PerceptionService()
