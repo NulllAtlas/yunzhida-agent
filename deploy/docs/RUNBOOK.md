@@ -79,6 +79,10 @@ docker compose up --build
 > `tests/test_llm_gateway.py` 用**本地假网关**离线覆盖，无需真实 Key 即可回归；
 > 拿到真实凭据后只需按上面填好 `.env`，走的即是同一段代码。
 
+> 感知服务（可选，D6）：配置 `PERCEPTION_SERVICE_URL` 指向 P3 的 `POST /perceive`，
+> 感知阶段即调用真实检测；留空或调用失败（网络/超时/结构非法）会自动回落本地文字
+> 降级场景，不影响任务成功。适配层由 `tests/test_perception_remote.py` 离线覆盖。
+
 ---
 
 ## 5. 加规则 / 加案例（RAG 入库）
@@ -148,6 +152,6 @@ python scripts/index_rules.py --dir ../data/cases    # 把 data/cases/*.md 解�
 - [x] 数据：`data/cases/*.md` 案例（RAG 入库）、`data/eval/eval_v1.json` 评测集
 - [x] 接口文档：`docs/roadmind/API.md`、`docs/roadmind/CONTRACTS.md`
 - [x] 部署：`docker-compose.yml` + `backend/Dockerfile` + `frontend/Dockerfile`
-- [x] 测试：`cd backend && pytest`（27 项，覆盖主链路 / 鉴权 / 视频上传 / WS / RAG / 视频分帧 / 网关离线回归）
+- [x] 测试：`cd backend && pytest`（31 项，覆盖主链路 / 鉴权 / 视频上传 / WS / RAG / 视频分帧 / 网关与感知服务离线回归）
 - [x] 演示说明：本 RUNBOOK
 - [ ] 现场演示环境（P1 彩排时由 P2 起环境）

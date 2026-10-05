@@ -10,6 +10,8 @@ pydantic==2.10.4
 pydantic-settings==2.7.1
 python-multipart==0.0.20
 openai==1.59.6
+# 感知服务适配层（D6）直接用 httpx 调用 P3 的 POST /perceive
+httpx==0.28.1
 # 分帧/抽帧（D8）用 headless 版：非 headless 的 opencv-python 依赖 libGL.so.1，
 # 在 python:3.12-slim 容器里 import cv2 会直接失败（API 无需 GUI，headless 完全够用）
 opencv-python-headless==4.10.0.84

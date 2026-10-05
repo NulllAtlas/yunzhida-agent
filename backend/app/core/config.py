@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     frame_max_width: int = 960              # 长边缩放上限，降低后续检测开销
     frame_jpeg_quality: int = 85
 
+    # 感知服务（D6）：P3 提供的 POST /perceive 地址；留空则走本地文字降级
+    perception_service_url: str = ""
+    perception_timeout_s: float = 30.0
+
     # 鉴权（D7）：JWT 与用户库
     jwt_secret: str = "roadmind-dev-secret-change-me"
     jwt_alg: str = "HS256"

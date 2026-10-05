@@ -1,19 +1,33 @@
 """
 视频/照片感知服务（M1）。
 
-MVP 阶段：提供低精度占位实现 ——
-- 从文字描述生成 mock 场景（保证无视频也能跑通）；
-- 输入视频时返回低置信 mock 场景并提示可能需补录（真实检测在迭代阶段接入，如 YOLO）。
+- 配置了 `PERCEPTION_SERVICE_URL` 时，调用 P3 的 `POST /perceive` 拿真实 scene.json；
+  任何失败（网络/超时/解析）都自动回落本地降级，绝不让任务失败（D6）。
+- 未配置时走本地降级：由文字生成低置信 mock 场景，并在有视频时按 D8 策略抽帧，
+  把关键帧路径挂到事件上，供 P3 检测与前端取证展示。
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from typing import Any
+
+import httpx
 
 from app.core.config import settings
 from app.schemas.models import Scene, SceneEvent, Vehicle, TrajectoryPoint
 from app.services.frames import frame_extractor
 
+logger = logging.getLogger(__name__)
+
 _ACCIDENT_KEYWORDS = ["追尾", "变道", "路口", "让行", "碰撞", "撞", "行人", "转弯"]
+
+# 认定一个响应确实像 scene 的字段集合：Scene 各字段都有默认值，
+# 不加这道门会把任意 JSON（如 {"foo":"bar"}）都当成合法的空场景。
+_SCENE_KEYS = {
+    "source", "vehicles", "events", "road",
+    "lane_markings", "traffic_light", "visibility", "confidence",
+}
 
 
 class PerceptionService:
@@ -48,12 +62,50 @@ class PerceptionService:
     async def perceive(
         self, scene_id: str, text: str | None, video_path: str | None = None
     ) -> Scene:
-        """入口：视频 → 场景（真实检测待 P3 提供 `POST /perceive`）。
+        """入口：优先调 P3 感知服务，失败/未配置则回落本地降级。"""
+        if settings.perception_service_url:
+            scene = await self._call_remote(scene_id, text, video_path)
+            if scene is not None:
+                return scene
+            logger.warning("P3 感知服务不可用，回落本地降级场景 scene_id=%s", scene_id)
+        return self._local_scene(scene_id, text, video_path)
 
-        真实检测接入前统一走"文字降级"路径生成低置信场景；若提供了视频，
-        先按 D8 策略抽样抽帧（大视频不逐帧解码），把关键帧路径挂到事件上，
-        供 P3 做 YOLO 检测与前端取证展示。
-        """
+    async def _call_remote(
+        self, scene_id: str, text: str | None, video_path: str | None
+    ) -> Scene | None:
+        """调用 P3 `POST /perceive`，返回 None 表示失败需回落。"""
+        url = settings.perception_service_url.rstrip("/") + "/perceive"
+        payload = {"scene_id": scene_id, "text": text, "video_path": video_path}
+        try:
+            async with httpx.AsyncClient(timeout=settings.perception_timeout_s) as client:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                data: Any = resp.json()
+        except Exception:  # noqa: BLE001 —— 网络/超时/非 2xx 均回落
+            logger.exception("调用 P3 感知服务失败：%s", url)
+            return None
+
+        # 兼容 {"code":0,"data":{...}} 与直接返回 scene 对象两种写法
+        if isinstance(data, dict) and isinstance(data.get("data"), dict):
+            data = data["data"]
+        if not isinstance(data, dict):
+            logger.warning("P3 感知服务返回结构不可解析：%r", type(data))
+            return None
+        if not (_SCENE_KEYS & data.keys()):
+            logger.warning("P3 感知服务返回缺少 scene 字段，回落本地：%r", sorted(data)[:6])
+            return None
+        if not data.get("scene_id"):
+            data = {**data, "scene_id": scene_id}
+        try:
+            return Scene.model_validate(data)
+        except Exception:  # noqa: BLE001 —— 字段不合法同样回落
+            logger.exception("P3 感知服务返回字段不合法，回落本地")
+            return None
+
+    def _local_scene(
+        self, scene_id: str, text: str | None, video_path: str | None
+    ) -> Scene:
+        """本地降级：文字 mock 场景 + D8 抽帧关键帧。"""
         scene = self.mock_scene_from_text(scene_id, text or "路口两车碰撞，疑似追尾")
         scene.confidence = settings.perception_confidence
 
@@ -68,8 +120,6 @@ class PerceptionService:
                     scene.events = [
                         SceneEvent(time=0.0, type="collision", keyframe=keyframe)
                     ]
-                # TODO(迭代/B): 把 result.frames 交给 P3 的 `POST /perceive`
-                #              做检测 + 轨迹提取；失败时保持当前文字降级场景。
         return scene
 
 
