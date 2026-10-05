@@ -75,6 +75,10 @@ docker compose up --build
 - 超时与重试：`LLM_TIMEOUT_S`（默认 60s）、`LLM_MAX_RETRIES`（默认 2）。
 - 容器部署时通过环境变量注入（见 `docker-compose.yml` 的 `api.environment`）。
 
+> 非 mock 代码路径（请求拼装 / 鉴权头 / 模型选择 / JSON 解析 / 失败回退）已由
+> `tests/test_llm_gateway.py` 用**本地假网关**离线覆盖，无需真实 Key 即可回归；
+> 拿到真实凭据后只需按上面填好 `.env`，走的即是同一段代码。
+
 ---
 
 ## 5. 加规则 / 加案例（RAG 入库）
@@ -143,6 +147,6 @@ python scripts/index_rules.py --dir ../data/cases    # 把 data/cases/*.md 解�
 - [x] 数据：`data/cases/*.md` 案例（RAG 入库）、`data/eval/eval_v1.json` 评测集
 - [x] 接口文档：`docs/roadmind/API.md`、`docs/roadmind/CONTRACTS.md`
 - [x] 部署：`docker-compose.yml` + `backend/Dockerfile` + `frontend/Dockerfile`
-- [x] 测试：`cd backend && pytest`（16 项，覆盖主链路 / 鉴权 / WS / RAG 回归）
+- [x] 测试：`cd backend && pytest`（26 项，覆盖主链路 / 鉴权 / WS / RAG / 视频分帧 / 网关离线回归）
 - [x] 演示说明：本 RUNBOOK
 - [ ] 现场演示环境（P1 彩排时由 P2 起环境）
