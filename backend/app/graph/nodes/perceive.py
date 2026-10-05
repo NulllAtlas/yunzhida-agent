@@ -8,6 +8,8 @@ from app.services.perception import perception_service
 async def perceive_node(state: State) -> State:
     state["step"] = "perceiving"
     state["scene"] = await perception_service.perceive(
-        state.get("case_id", "case"), state.get("input_text")
+        state.get("case_id", "case"),
+        state.get("input_text"),
+        state.get("video_path"),
     )
     return state

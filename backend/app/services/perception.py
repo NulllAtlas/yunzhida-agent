@@ -7,8 +7,11 @@ MVP 阶段：提供低精度占位实现 ——
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.core.config import settings
 from app.schemas.models import Scene, SceneEvent, Vehicle, TrajectoryPoint
+from app.services.frames import frame_extractor
 
 _ACCIDENT_KEYWORDS = ["追尾", "变道", "路口", "让行", "碰撞", "撞", "行人", "转弯"]
 
@@ -42,16 +45,31 @@ class PerceptionService:
         )
         return scene
 
-    async def perceive(self, scene_id: str, text: str | None) -> Scene:
+    async def perceive(
+        self, scene_id: str, text: str | None, video_path: str | None = None
+    ) -> Scene:
         """入口：视频 → 场景（真实检测待 P3 提供 `POST /perceive`）。
 
-        在真实感知接入前，统一走"文字降级"路径：由文字描述生成低置信场景，
-        保证任何输入都能跑完整条链路（对应 TEAM-WORKFLOW 的降级链路要求）。
+        真实检测接入前统一走"文字降级"路径生成低置信场景；若提供了视频，
+        先按 D8 策略抽样抽帧（大视频不逐帧解码），把关键帧路径挂到事件上，
+        供 P3 做 YOLO 检测与前端取证展示。
         """
-        # TODO(迭代/B): 调用 P3 的 `POST /perceive` 做 YOLO 抽帧检测 + 轨迹提取，
-        #              识别失败时再回落到下面的文字降级路径。
         scene = self.mock_scene_from_text(scene_id, text or "路口两车碰撞，疑似追尾")
         scene.confidence = settings.perception_confidence
+
+        if video_path:
+            result = frame_extractor.extract(video_path, Path(settings.frames_dir) / scene_id)
+            if result.ok:
+                scene.source = "video"
+                keyframe = result.frames[len(result.frames) // 2].path
+                if scene.events:
+                    scene.events[0].keyframe = keyframe
+                else:
+                    scene.events = [
+                        SceneEvent(time=0.0, type="collision", keyframe=keyframe)
+                    ]
+                # TODO(迭代/B): 把 result.frames 交给 P3 的 `POST /perceive`
+                #              做检测 + 轨迹提取；失败时保持当前文字降级场景。
         return scene
 
 

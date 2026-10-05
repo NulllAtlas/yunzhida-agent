@@ -20,6 +20,8 @@ class RoadMindState(TypedDict, total=False):
 
     case_id: str
     input_text: str
+    # 已上传视频的本地路径（可选；由 API 层解析 video_id 得到）
+    video_path: Optional[str]
 
     # M1 感知结果
     scene: Optional[Scene]

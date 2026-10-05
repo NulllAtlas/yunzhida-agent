@@ -10,7 +10,9 @@ pydantic==2.10.4
 pydantic-settings==2.7.1
 python-multipart==0.0.20
 openai==1.59.6
-opencv-python==4.10.0.84
+# 分帧/抽帧（D8）用 headless 版：非 headless 的 opencv-python 依赖 libGL.so.1，
+# 在 python:3.12-slim 容器里 import cv2 会直接失败（API 无需 GUI，headless 完全够用）
+opencv-python-headless==4.10.0.84
 numpy==1.26.4
 chromadb==0.5.23
 # chromadb 导入期会实例化 DefaultEmbeddingFunction，缺少 onnxruntime 会导致 import 失败

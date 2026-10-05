@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     max_concurrency: int = 4
     task_timeout_s: float = 180.0
 
+    # 视频分帧（D8：大视频分帧处理策略）
+    frames_dir: str = "./data/frames"
+    video_max_frames: int = 24              # 单个视频最多抽多少关键帧
+    video_max_duration_s: float = 600.0     # 超过该时长只做均匀采样并标记 truncated
+    video_extract_timeout_s: float = 60.0   # 抽帧总耗时熔断
+    frame_max_width: int = 960              # 长边缩放上限，降低后续检测开销
+    frame_jpeg_quality: int = 85
+
     # 鉴权（D7）：JWT 与用户库
     jwt_secret: str = "roadmind-dev-secret-change-me"
     jwt_alg: str = "HS256"

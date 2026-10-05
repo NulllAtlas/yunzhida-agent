@@ -123,6 +123,14 @@ python scripts/index_rules.py --dir ../data/cases    # 把 data/cases/*.md 解�
 | 任务一直 `processing` | LLM 网关不通且未回退 | 正常应回退规则；检查日志 `roadmind.access` |
 | 401 / 403 | 未带 Token 或角色不符 | 先 `POST /api/auth/login`，交警接口需 police 角色 |
 | 案件列表为空 | 案件只在任务完成后落库 | 等任务 `done` 后再查 |
+| 视频案件 `scene.source` 仍是 `text` | 视频不在 `UPLOAD_DIR` 下或无法解码 | 确认 `video_id` 指向 `data/uploads` 中真实文件 |
+| 抽帧太少 / 太慢 | 受分帧上限约束 | 调 `VIDEO_MAX_FRAMES` / `FRAME_MAX_WIDTH` / `VIDEO_EXTRACT_TIMEOUT_S` |
+
+**视频分帧参数（D8 大视频策略）**：大视频不逐帧解码，按 `VIDEO_MAX_FRAMES` 均匀抽样，
+用 `CAP_PROP_POS_MSEC` 直接定位采样点，长边缩放到 `FRAME_MAX_WIDTH`；超过
+`VIDEO_MAX_DURATION_S` 只采样并标记 `truncated`，抽帧总耗时超过 `VIDEO_EXTRACT_TIMEOUT_S`
+即熔断；任何失败都回落文字降级、不影响任务成功。关键帧落盘在
+`FRAMES_DIR/{task_id}/`，中间帧路径写入 `scene.events[*].keyframe`。
 
 日志：`logging` 统一格式，请求日志带耗时；响应头 `X-Process-Time-ms` 可直接观测单请求耗时。
 

@@ -43,14 +43,18 @@ class TaskManager:
         self._semaphore = asyncio.Semaphore(settings.max_concurrency)
         # 指标（D8）
         self.metrics: dict[str, int] = {"created": 0, "running": 0, "done": 0, "failed": 0}
+        # D8：视频路径透传给感知节点做抽帧（避免参数在多层调用间扩散）
+        self._video_paths: dict[str, str] = {}
 
     # ---------- 状态 ----------
 
-    def create(self, input_text: str = "") -> TaskInfo:
+    def create(self, input_text: str = "", video_path: str | None = None) -> TaskInfo:
         task = TaskInfo(task_id=uuid.uuid4().hex[:12])
         self._tasks[task.task_id] = task
         self.metrics["created"] += 1
         self._input_texts[task.task_id] = input_text
+        if video_path:
+            self._video_paths[task.task_id] = video_path
         self._persist(task, result=None)
         return task
 
@@ -123,6 +127,7 @@ class TaskManager:
         state: State = {
             "case_id": task_info.task_id,
             "input_text": input_text,
+            "video_path": self._video_paths.get(task_info.task_id),
             "step": "pending",
         }
         snapshot: dict[str, Any] = {}

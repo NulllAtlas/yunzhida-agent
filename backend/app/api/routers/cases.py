@@ -1,9 +1,12 @@
 """主流程 API 路由（D1/D2/D7）：创建案件、查询状态、查询结果。"""
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, BackgroundTasks
 
 from app.api.tasks import task_manager
+from app.core.config import settings
 from app.core.errors import ApiError
 from app.schemas.models import CaseInput, TaskInfo
 
@@ -20,8 +23,15 @@ async def create_case(case: CaseInput, background: BackgroundTasks) -> TaskInfo:
             "请至少提供 video_id / scene_id / text_description 之一",
             422,
         )
-    task = task_manager.create(input_text=text)
-    background.add_task(task_manager.run, task, text or "路口两车发生碰撞，疑似追尾")
+    video_path = None
+    if case.video_id:
+        # video_id 视为已上传视频的文件名；只取 basename 防目录穿越
+        candidate = Path(settings.upload_dir) / Path(case.video_id).name
+        if candidate.is_file():
+            video_path = str(candidate)
+
+    task = task_manager.create(input_text=text, video_path=video_path)
+    background.add_task(task_manager.run, task, text or "路口两车碰撞，疑似追尾")
     return task
 
 

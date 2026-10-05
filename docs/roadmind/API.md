@@ -54,6 +54,9 @@
 { "text_description": "路口我车直行，对方左转弯未让行发生碰撞" }
 ```
 
+- `video_id`：已上传视频的文件名（需实际存在于服务端 `UPLOAD_DIR`）。提供后感知阶段会按
+  D8 策略抽样抽帧（大视频不逐帧解码），`scene.source` 变为 `video`，中间关键帧路径写入
+  `scene.events[*].keyframe`；抽帧失败则自动回落文字降级，不会让任务失败。
 - 输入三选一：`video_id` / `scene_id` / `text_description`（全空返回 `EMPTY_INPUT`）。
 - 返回任务信息：
 

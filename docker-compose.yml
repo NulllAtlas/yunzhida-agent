@@ -23,6 +23,7 @@ services:
       JWT_SECRET: "${JWT_SECRET:-roadmind-dev-secret-change-me}"
       DB_PATH: "/app/data/roadmind.db"
       CHROMA_DIR: "/app/data/chroma"
+      FRAMES_DIR: "/app/data/frames"
     volumes:
       - roadmind-data:/app/data
     restart: unless-stopped
