@@ -3,6 +3,10 @@
 > 适用版本：backend v0.2.0（D1–D11 完成态）
 > 目标：任何人拿到仓库后，能在 5 分钟内把服务跑起来、换模型、加规则、排障。
 
+> 相关文档：[P2 交付备忘](../../docs/roadmind/P2-DELIVERY-NOTES.md)（完成度 / 口径 / 剩余待办）·
+> [API 契约](../../docs/roadmind/API.md) · [数据结构契约](../../docs/roadmind/CONTRACTS.md) ·
+> [任务分工](../../docs/roadmind/TEAM-WORKFLOW.md)
+
 ---
 
 ## 1. 环境要求
