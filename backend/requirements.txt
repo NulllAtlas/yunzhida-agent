@@ -2,7 +2,9 @@
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
 langgraph==0.2.60
-langchain-core==0.3.33
+# langchain-openai==0.3.5 要求 langchain-core>=0.3.34，而 langgraph 0.2.60 要求 <0.4.0：
+# 三者交集为 0.3.34，写成 0.3.33 会导致 pip ResolutionImpossible（容器内构建时才暴露）
+langchain-core==0.3.34
 langchain-openai==0.3.5
 pydantic==2.10.4
 pydantic-settings==2.7.1

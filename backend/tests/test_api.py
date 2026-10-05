@@ -1,7 +1,11 @@
 """后端接口与关键修复的回归测试（P2 · D2/D3/D4/D7）。"""
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 from app.services.llm import _as_pairs
 from app.services.rag import RagService, _NGramEmbedding
@@ -148,3 +152,23 @@ def test_llm_prompt_accepts_pydantic_evidence():
     docs = [RetrievedDoc(id="law-043", title="道交法 第43条", content="保持安全距离")]
     assert _as_pairs(docs) == [("道交法 第43条", "保持安全距离")]
     assert _as_pairs([{"title": "T", "content": "C"}]) == [("T", "C")]
+
+
+def test_index_rules_script_runs_standalone():
+    """入库脚本必须能被 `python scripts/index_rules.py` 直接执行。
+
+    此前 sys.path[0] 是 scripts/ 而非 backend/，`import app` 直接 ModuleNotFoundError，
+    即该脚本从未真正跑通过。
+    """
+    backend_dir = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": "", "PYTHONDONTWRITEBYTECODE": "1"}
+    proc = subprocess.run(
+        [sys.executable, "scripts/index_rules.py"],
+        cwd=backend_dir,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=180,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "入库完成" in proc.stdout, proc.stdout[-2000:]

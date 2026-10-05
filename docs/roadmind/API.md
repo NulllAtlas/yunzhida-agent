@@ -100,6 +100,10 @@
 
 `WS /api/ws/tasks/{task_id}`
 
+> **路径定型说明**：D1 排期草稿（`TEAM-WORKFLOW.md`）中该接口写作 `WS /progress`，
+> 正式契约定型为 `/api/ws/tasks/{task_id}` —— 与 REST 的 `/api/tasks/{id}/status`
+> 保持同一资源层级，便于 Nginx 按 `/api/` 统一反代。以本文档为准。
+
 连接后依次收到：
 
 ```json
