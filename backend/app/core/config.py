@@ -3,12 +3,22 @@ RoadMind 应用配置。
 
 通过环境变量或 .env 覆盖。MVP 阶段默认使用 MOCK 服务，
 无需真实模型凭据即可跑通整条链路。
+
+.env 查找位置（相对进程 CWD，靠后者覆盖靠前者）：
+  1. `../.env` —— 仓库根目录的 .env（README 里 `cp .env.example .env` 的落点）；
+  2. `.env`    —— 当前目录的 .env（即 backend/.env，本地开发时的真实凭据）。
+这样无论是 `cd backend && uvicorn ...` 还是从仓库根启动，都能读到配置；
+容器内 backend 被复制到 /app，根目录那份不存在，自动跳过，只认注入的环境变量。
 """
+from __future__ import annotations
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=("../.env", ".env"), extra="ignore"
+    )
 
     app_name: str = "RoadMind"
     debug: bool = True
@@ -23,7 +33,7 @@ class Settings(BaseSettings):
     model_strong: str = ""
 
     # LLM 调用超时与重试（D4：超时控制）
-    llm_timeout_s: float = 60.0
+    llm_timeout_s: float = 180.0
     llm_max_retries: int = 2
 
     # 向量库（迭代阶段）
@@ -37,9 +47,19 @@ class Settings(BaseSettings):
     # 感知（M1）：真实视频检测接入前，文字降级场景的默认置信度
     perception_confidence: float = 0.55
 
+    # 视频感知（M1·真实检测）：ultralytics YOLO 检测+追踪（内嵌 app/algo/video_tracker）
+    algo_model_name: str = "yolov8s.pt"
+    algo_conf: float = 0.3
+    # 抽帧步长：每 N 帧检测一帧（CPU 提速，2 = 约两倍速）
+    algo_vid_stride: int = 2
+    # 确定性事故门控（仅视频来源）：双门槛由代码判定"是否真实事故"，不交给 LLM 波动
+    gate_min_speed_kmh: float = 10.0
+    gate_min_event_conf: float = 0.6
+
     # 并发控制（D8）：同时执行的多智能体任务上限 & 单任务超时熔断
+    # CPU 上 YOLO 逐帧检测较慢，短视频约 1-3 分钟，上限放宽到 600s
     max_concurrency: int = 4
-    task_timeout_s: float = 180.0
+    task_timeout_s: float = 600.0
 
     # 鉴权（D7）：JWT 与用户库
     jwt_secret: str = "roadmind-dev-secret-change-me"
