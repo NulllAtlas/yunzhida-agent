@@ -1,0 +1,114 @@
+{
+  "schema_version": "1.0",
+  "generated_by": "P1",
+  "generated_at": "2026-10-03",
+  "description": "云智达 判定模块评测集 v1（10 场景）。供 P3 用 services/judge 跑判定并回归，断言责任占比、法条引用、置信度阈值。",
+  "eval_assert": {
+    "责任占比(hit)": "期望结论在 primary/secondary/equal/none 中匹配，或归入 low_confidence 兜底",
+    "法条引用": "期望引用的法条关键条款命中 basis",
+    "置信度阈值": "明确场景 confidence 需 >= 阈值；要素不足场景判 low_confidence"
+  },
+  "cases": [
+    {
+      "id": "e01",
+      "name": "高速追尾",
+      "input": "高速公路上后车未保持安全距离追尾前车，前车正常减速，视频清晰",
+      "accident_type": "rear_end",
+      "expect": { "party_1": "primary", "party_2": "none", "split": "100/0" },
+      "expected_law": "第 43 条",
+      "min_confidence": 0.7,
+      "low_confidence_ok": false
+    },
+    {
+      "id": "e02",
+      "name": "变道刮蹭",
+      "input": "城市道路车辆变道未打灯未让行，与目标车道正常行驶车辆刮蹭",
+      "accident_type": "lane_change",
+      "expect": { "party_1": "primary", "party_2": "none", "split": "100/0" },
+      "expected_law": "第 44 条",
+      "min_confidence": 0.7,
+      "low_confidence_ok": false
+    },
+    {
+      "id": "e03",
+      "name": "无信号灯路口未让右",
+      "input": "无信号灯路口 B 车未让右方来车 A 车，两车相撞",
+      "accident_type": "no_priority",
+      "expect": { "party_1": "primary", "party_2": "secondary", "split": "70/30" },
+      "expected_law": "第 47 条",
+      "min_confidence": 0.6,
+      "low_confidence_ok": false
+    },
+    {
+      "id": "e04",
+      "name": "转弯未让直行",
+      "input": "路口车辆左转弯未让对向直行车辆，两车碰撞",
+      "accident_type": "turning_no_yield",
+      "expect": { "party_1": "primary", "party_2": "none", "split": "100/0" },
+      "expected_law": "第 51 条",
+      "min_confidence": 0.7,
+      "low_confidence_ok": false
+    },
+    {
+      "id": "e05",
+      "name": "闯红灯",
+      "input": "有信号灯路口，车辆闯红灯与绿灯正常通行车辆相撞",
+      "accident_type": "red_light",
+      "expect": { "party_1": "primary", "party_2": "none", "split": "100/0" },
+      "expected_law": "第 38 条",
+      "min_confidence": 0.7,
+      "low_confidence_ok": false
+    },
+    {
+      "id": "e06",
+      "name": "倒车碰撞",
+      "input": "小区内车辆倒车未察明车后情况，与后方电动车碰撞",
+      "accident_type": "reverse",
+      "expect": { "party_1": "primary", "party_2": "none", "split": "100/0" },
+      "expected_law": "第 50 条",
+      "min_confidence": 0.7,
+      "low_confidence_ok": false
+    },
+    {
+      "id": "e07",
+      "name": "逆行迎面相撞",
+      "input": "车辆逆行驶入对向车道与正常行驶车辆迎面相撞",
+      "accident_type": "wrong_way",
+      "expect": { "party_1": "primary", "party_2": "none", "split": "100/0" },
+      "expected_law": "第 35 条",
+      "min_confidence": 0.7,
+      "low_confidence_ok": false
+    },
+    {
+      "id": "e08",
+      "name": "斑马线未让行撞行人",
+      "input": "机动车行经人行横道未让行，撞倒正常通过斑马线的行人",
+      "accident_type": "car_pedestrian",
+      "expect": { "party_1": "primary", "party_2": "none", "split": "100/0" },
+      "expected_law": "第 47 条",
+      "min_confidence": 0.6,
+      "low_confidence_ok": false
+    },
+    {
+      "id": "e09",
+      "name": "行人闯红灯（机动车减责）",
+      "input": "有信号灯路口行人闯红灯横穿，机动车制动不及将行人撞伤，视频清晰",
+      "accident_type": "car_pedestrian",
+      "expect": { "party_1": "secondary", "party_2": "primary", "split": "20/80" },
+      "expected_law": "第 76 条",
+      "min_confidence": 0.5,
+      "low_confidence_ok": true
+    },
+    {
+      "id": "e10",
+      "name": "要素不足（夜间遮挡）",
+      "input": "夜间视频模糊、遮挡严重，无法确认车道与碰撞过程",
+      "accident_type": "unknown",
+      "expect": { "party_1": "unknown", "party_2": "unknown" },
+      "expected_law": null,
+      "min_confidence": 0.0,
+      "low_confidence_ok": true,
+      "note": "期望走 low_confidence + 提示人工复核/补录"
+    }
+  ]
+}
