@@ -12,7 +12,7 @@ backend/
 │   ├── schemas/models.py    # scene/judgment/response 数据模型
 │   ├── graph/               # LangGraph：perceive→retrieve→judge→respond→aggregate
 │   │   └── nodes/           # 各智能体节点
-│   ├── services/            # perception(M1) / frames(视频分帧) / rag(M2) / llm(M3+M4)
+│   ├── services/            # perception(M1) / rag(M2) / llm(M3+M4)
 │   └── api/                 # 路由：auth / cases / tasks(任务管理) / police / progress(WS)
 ├── scripts/index_rules.py   # chromadb 法条/案例入库脚本
 ├── tests/                   # pytest 用例

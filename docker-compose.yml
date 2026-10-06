@@ -27,9 +27,6 @@ services:
       JWT_SECRET: "${JWT_SECRET:-roadmind-dev-secret-change-me}"
       DB_PATH: "/app/data/roadmind.db"
       CHROMA_DIR: "/app/data/chroma"
-      FRAMES_DIR: "/app/data/frames"
-      # 感知服务（可选，D6）：P3 的 POST /perceive 地址；留空或调用失败走本地文字降级
-      PERCEPTION_SERVICE_URL: "${PERCEPTION_SERVICE_URL:-}"
     volumes:
       - roadmind-data:/app/data
     restart: unless-stopped

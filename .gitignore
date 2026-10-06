@@ -38,8 +38,6 @@ data/uploads/*
 !data/uploads/.gitkeep
 data/chroma/*
 !data/chroma/.gitkeep
-data/frames/*
-!data/frames/.gitkeep
 *.frames/
 
 # 大文件（视频等走网盘/群文件）
