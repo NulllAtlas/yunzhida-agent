@@ -12,9 +12,14 @@ index_rules.py · 把法条/案例切分并入 chromadb（M2 入库脚本）。
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
-from app.services.rag import rag_service, _LAW_POOL
+# 直接以 `python scripts/index_rules.py` 执行时，sys.path[0] 是 scripts/ 而非工程根，
+# 会导致 `import app` 失败；这里显式把 backend/ 加入模块搜索路径。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.services.rag import rag_service, _LAW_POOL  # noqa: E402
 
 
 def _docs_from_builtin() -> list[dict]:

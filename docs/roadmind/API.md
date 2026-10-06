@@ -18,7 +18,8 @@
 { "code": "TASK_NOT_FOUND", "msg": "任务不存在", "data": null }
 ```
 
-错误码：`VALIDATION_ERROR`(422) / `EMPTY_INPUT`(422) / `USER_EXISTS`(409) /
+错误码：`VALIDATION_ERROR`(422) / `EMPTY_INPUT`(422) / `INVALID_FILE_TYPE`(422) /
+`EMPTY_FILE`(422) / `FILE_TOO_LARGE`(413) / `USER_EXISTS`(409) /
 `BAD_CREDENTIALS`(401) / `UNAUTHORIZED`(401) / `FORBIDDEN`(403) /
 `TASK_NOT_FOUND`(404) / `CASE_NOT_FOUND`(404) / `TASK_PROCESSING`(202) / `INTERNAL_ERROR`(500)。
 
@@ -46,46 +47,37 @@
 
 后续请求带 `Authorization: Bearer <access_token>`。
 
-## 2. 创建案件并启动分析（D1/D2）
+## 2. 视频上传与创建案件（D1/D2）
 
-`POST /api/cases` — **202**
+### `POST /api/uploads/video` — **201**
+
+上传事故视频，落盘到 `UPLOAD_DIR`，返回可作为 `video_id` 的文件名。
+
+- `multipart/form-data`，字段名 `file`；支持 `.mp4/.mov/.avi/.mkv/.webm/.flv/.m4v`。
+- 校验：非视频扩展名 → `INVALID_FILE_TYPE`；空文件 → `EMPTY_FILE`；超过
+  `MAX_UPLOAD_MB`（默认 100）→ `FILE_TOO_LARGE`。落盘用随机文件名，失败不留残文件。
+
+```json
+{ "code": 0, "msg": "ok",
+  "data": { "video_id": "a1b2c3d4e5f6.mp4", "size": 10485760, "content_type": "video/mp4" } }
+```
+
+### `POST /api/cases` — **202**
 
 ```json
 { "text_description": "路口我车直行，对方左转弯未让行发生碰撞" }
 ```
 
+- `video_id`：已上传视频的文件名（由上面的 `POST /api/uploads/video` 上传得到，或手动放入
+  `UPLOAD_DIR`）。提供后感知阶段会按
+  D8 策略抽样抽帧（大视频不逐帧解码），`scene.source` 变为 `video`，中间关键帧路径写入
+  `scene.events[*].keyframe`；抽帧失败则自动回落文字降级，不会让任务失败。
 - 输入三选一：`video_id` / `scene_id` / `text_description`（全空返回 `EMPTY_INPUT`）。
 - 返回任务信息：
 
 ```json
 { "task_id": "adf72a071510", "status": "pending", "progress": 0.0 }
 ```
-
-## 2.1 统一提交入口（视频 / 文字 / 现场照片）
-
-`POST /api/submissions` — **202**（`multipart/form-data`）
-
-前端（车主端与交警端共用的提交表单）实际走的就是这个入口。
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `description` | text，可选 | 用户补充的文字描述，进判定上下文的「事故描述」 |
-| `video` | file，可选 | 行车记录仪视频（mp4/mov/avi/mkv，≤ `max_upload_mb`） |
-| `photos` | file[]，可选 | 现场照片，**同名 key 多次传**；≤3 张、每张 ≤10MB、仅 `image/*` |
-
-- 三者**任意组合**、至少给一个：全空返回 `EMPTY_INPUT`（422）；
-  照片超限 `TOO_MANY_PHOTOS`，类型/体积不符 `INVALID_FILE` / `FILE_TOO_LARGE`。
-- **文字与场景证据是两份独立输入，合并后同时进判定** —— 不再是有视频就把文字丢掉。
-- 照片走单帧检测（`app/algo/photo_detector.py`），证据落在 `result.scene.photos`
-  （字段见 SCENE-SCHEMA v4）；照片是静态证据，**不参与事故门控**。
-- 返回结构与 `POST /api/cases` 相同（TaskInfo）。
-
-```json
-{ "task_id": "adf72a071510", "status": "pending", "progress": 0.0 }
-```
-
-> `POST /api/videos`（仅视频）与 `POST /api/cases`（JSON，文字/已有媒体）保留不变，
-> 分别供简单上传与带 `video_id` 的调用方使用。
 
 ## 3. 任务状态查询（D2）
 
@@ -97,38 +89,6 @@
 ```json
 { "task_id": "adf72a071510", "status": "done", "progress": 1.0, "result": { "..." } }
 ```
-
-## 3.1 研判记录（车主端记录列表 / 跨设备）
-
-`GET /api/history?limit=20&offset=0`
-
-- 记录落在后端 SQLite（创建与完成时各写一次），**换浏览器、换设备看到的是同一份**，
-  前端不再依赖 localStorage。
-- 不鉴权：`POST /api/videos` 本身就允许匿名提交，车主端也没有账号概念；
-  等记录要按账号归属时再加 owner 过滤。
-- `status` 非终态但后端内存里已无该任务（进程重启留下的半截任务）→ 返回
-  `failed` + `error`「后端重启，该次分析已中断」，避免前端一直转圈。
-- 列表项**带完整 `result`**（车主端直接渲染历史结论，不必逐条再查详情）。
-
-```json
-{ "code": 0, "msg": "ok", "data": [
-  {
-    "task_id": "adf72a071510",
-    "filename": "行车记录仪.mp4",
-    "input_text": "对方压实线变道",
-    "photos": ["adf72a071510_p0.jpg"],
-    "status": "done",
-    "accident_type": "追尾",
-    "error": null,
-    "created_at": "2026-10-06T02:06:29+00:00",
-    "updated_at": "2026-10-06T02:06:35+00:00",
-    "result": { "...": "scene / judgment / response 结构同 §4" }
-  }
-] }
-```
-
-> `filename` 只在本次提交带了视频时非空（纯照片/文字提交为空串）；`photos` 是落盘的存储名，
-> 仅用于显示"交了几张"，原图不回显。
 
 ## 4. 任务结果查询（D2）
 
@@ -157,6 +117,10 @@
 ## 5. 进度推送（D4/D5）
 
 `WS /api/ws/tasks/{task_id}`
+
+> **路径定型说明**：D1 排期草稿（`TEAM-WORKFLOW.md`）中该接口写作 `WS /progress`，
+> 正式契约定型为 `/api/ws/tasks/{task_id}` —— 与 REST 的 `/api/tasks/{id}/status`
+> 保持同一资源层级，便于 Nginx 按 `/api/` 统一反代。以本文档为准。
 
 连接后依次收到：
 
@@ -193,6 +157,9 @@
 
 - **契约结构**：`scene.json` / `judgment.json` / `response.json` 详细结构见 `SCENE-SCHEMA.md` 与 `CONTRACTS.md`（字段与 `app/schemas/models.py` 一致）。
 - **降级链路**：感知置信低时由前端转文字补录，以 `text_description` 重新触发判定，保证任意输入都能出结果。
+- **感知服务（P2，D6）**：配置 `PERCEPTION_SERVICE_URL` 后，感知阶段调用 P3 的 `POST /perceive`
+  取真实 `scene`（请求体 `{scene_id, text, video_path}`）；未配置或调用失败（网络/超时/结构非法）
+  自动回落本地文字降级场景，保证任务不失败。
 - **MoMA 网关（P2，D3）**：`app/services/llm.py` 封装统一 `call_chat()`（OpenAI 兼容网关，带鉴权/超时/重试）。`use_mock=True` 或未配置网关时走规则兜底；`use_mock=False` 且配置 `.env` 后走真实 MoMA。配置字段见 `.env.example`：`MOMA_API_KEY` / `MOMA_BASE_URL` / `MODEL_FAST` / `MODEL_STRONG`。
 - **RAG 入库（P2，D3）**：`app/services/rag.py` 支持 chromadb 向量检索（轻量本地 n-gram embedding，离线可用），不可用时自动降级为关键词检索。法条/案例入库：
   ```bash
@@ -200,6 +167,6 @@
   python scripts/index_rules.py                       # 内置规则入库
   python scripts/index_rules.py --dir ../data/cases   # 从目录 .md 入库
   ```
-- **P4 联调占位**：`POST /api/upload`（图片）、`POST /api/audit`（审核）是前端早期联调的**固定返回**，
-  不进链路。已无前端调用方（提交入口统一走 §2.1 的 `POST /api/submissions`）；
-  保留是为了不破坏旧联调脚本与 `views/PoliceDetail.vue` 的调用。
+- **P4 联调占位**：`POST /api/upload`（单数，图片固定返回）、`POST /api/audit` 为前端早期联调产物，
+  保留以免破坏 `frontend/src/components/UploadZone.vue` 与 `views/PoliceDetail.vue`；**真实视频上传**
+  请用 `POST /api/uploads/video`，再走 `POST /api/cases` → `GET /api/tasks/{id}/result`。

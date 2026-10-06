@@ -52,8 +52,6 @@ def init_db() -> None:
                 case_id          TEXT,
                 status           TEXT NOT NULL,
                 input_text       TEXT,
-                filename         TEXT,
-                photos           TEXT,
                 accident_type    TEXT,
                 responsibility   TEXT,
                 split            TEXT,
@@ -68,17 +66,7 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_cases_created ON cases(created_at DESC);
             """
         )
-        # 已有开发库的补列（CREATE TABLE IF NOT EXISTS 不会改老表结构）
-        _ensure_column(conn, "cases", "filename", "filename TEXT")
-        _ensure_column(conn, "cases", "photos", "photos TEXT")
         conn.commit()
-
-
-def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
-    """缺列才补。SQLite 没有 ADD COLUMN IF NOT EXISTS，只能先查 pragma。"""
-    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
-    if column not in existing:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
 
 # ---------------- 用户 ----------------
@@ -109,8 +97,6 @@ def upsert_case(
     case_id: str,
     status: str,
     input_text: str = "",
-    filename: str = "",
-    photos: Optional[list[str]] = None,
     result: Optional[dict[str, Any]] = None,
     error: Optional[str] = None,
 ) -> None:
@@ -118,21 +104,17 @@ def upsert_case(
     judgment = (result or {}).get("judgment") or {}
     response = (result or {}).get("response") or {}
     responsibility = (judgment.get("responsibility") or {})
-    photos_json = json.dumps(photos or [], ensure_ascii=False)
     conn = get_conn()
     with _lock:
         conn.execute(
             """
             INSERT INTO cases (
-                task_id, case_id, status, input_text, filename, photos, accident_type,
+                task_id, case_id, status, input_text, accident_type,
                 responsibility, split, confidence, priority,
                 result_json, error, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(task_id) DO UPDATE SET
                 status = excluded.status,
-                -- 结束时的这次落库不该把创建时记下的文件名/照片冲掉
-                filename = CASE WHEN excluded.filename != '' THEN excluded.filename ELSE cases.filename END,
-                photos = CASE WHEN excluded.photos != '[]' THEN excluded.photos ELSE cases.photos END,
                 accident_type = excluded.accident_type,
                 responsibility = excluded.responsibility,
                 split = excluded.split,
@@ -147,8 +129,6 @@ def upsert_case(
                 case_id,
                 status,
                 input_text,
-                filename,
-                photos_json,
                 response.get("accident_type"),
                 responsibility.get("party_1"),
                 responsibility.get("split"),
@@ -176,42 +156,6 @@ def list_cases(limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def _loads_list(raw: Any) -> list[Any]:
-    """解析存成 JSON 文本的列表列（photos）；坏数据当空列表，不让列表接口整个 500。"""
-    if not raw:
-        return []
-    try:
-        value = json.loads(raw)
-    except (TypeError, ValueError):
-        return []
-    return value if isinstance(value, list) else []
-
-
-def list_records(limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
-    """车主端「研判记录」：按提交时间倒序，含完整 result，一次拉全。
-
-    和 list_cases 的区别是带 result_json：车主端要直接渲染历史结论，
-    逐条再查一次详情就是 N+1 了。
-    """
-    rows = get_conn().execute(
-        """
-        SELECT task_id, case_id, status, input_text, filename, photos, accident_type,
-               responsibility, split, confidence, priority, result_json, error,
-               created_at, updated_at
-        FROM cases ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?
-        """,
-        (limit, offset),
-    ).fetchall()
-    out: list[dict[str, Any]] = []
-    for row in rows:
-        data = dict(row)
-        raw = data.pop("result_json", None)
-        data["result"] = json.loads(raw) if raw else None
-        data["photos"] = _loads_list(data.get("photos"))
-        out.append(data)
-    return out
-
-
 def get_case(task_id: str) -> Optional[dict[str, Any]]:
     """单案件详情（含完整 result）。"""
     row = get_conn().execute("SELECT * FROM cases WHERE task_id = ?", (task_id,)).fetchone()
@@ -220,5 +164,4 @@ def get_case(task_id: str) -> Optional[dict[str, Any]]:
     data = dict(row)
     raw = data.pop("result_json", None)
     data["result"] = json.loads(raw) if raw else None
-    data["photos"] = _loads_list(data.get("photos"))
     return data

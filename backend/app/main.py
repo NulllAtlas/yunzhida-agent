@@ -1,17 +1,17 @@
-"""云智达 后端入口。"""
+"""RoadMind 后端入口。"""
 from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app.api import auth_router, cases_router, config_router, police_router, progress_router
+from app.api import auth_router, cases_router, police_router, progress_router, uploads_router
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.errors import register_exception_handlers
@@ -40,10 +40,10 @@ register_request_logging(app)
 register_exception_handlers(app)
 
 app.include_router(auth_router)      # D7：注册 / 登录 / JWT
+app.include_router(uploads_router)   # D1/D2：视频上传落盘（返回 video_id）
 app.include_router(cases_router)     # D1/D2：创建案件 / 状态 / 结果 / 指标
 app.include_router(police_router)    # D7：交警端案件列表 / 详情 / 草稿导出
 app.include_router(progress_router)  # D4/D5：WebSocket 进度推送
-app.include_router(config_router)    # 运行时切换大模型（首页模型配置面板）
 
 # 静态前端（打包产物 dist），便于本地一键演示
 _FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
@@ -56,12 +56,11 @@ async def index():
     index_file = _FRONTEND_DIR / "index.html"
     if index_file.exists():
         return FileResponse(index_file)
-    return {"message": "云智达 API 运行中。前端未打包，请先 npm run build。"}
+    return {"message": "RoadMind API 运行中。前端未打包，请先 npm run build。"}
 
 
 @app.get("/health")
 async def health():
-    """健康检查 + 运行配置（前端首页据此显示当前连接的模型与运行模式）。"""
     return {
         "status": "ok",
         "app": settings.app_name,
@@ -69,9 +68,6 @@ async def health():
         "use_mock": settings.use_mock,
         "rag_backend": rag_service.backend,
         "llm_configured": bool(settings.moma_base_url),
-        "model_strong": settings.model_strong,
-        "model_fast": settings.model_fast,
-        "algo_model": settings.algo_model_name,
         "max_concurrency": settings.max_concurrency,
     }
 
@@ -133,24 +129,3 @@ async def audit(req: AuditReq):
     """交警审核案件（P4 联调占位）。"""
     print(f"[AUDIT] id={req.id} action={req.action} comment={req.comment}")
     return {"code": 0, "msg": f"已{req.action}", "data": {"id": req.id, "action": req.action}}
-
-
-# ==================== SPA 回落 ====================
-# 作用等同前端 nginx.conf 里的 `try_files $uri $uri/ /index.html`。
-# 必须注册在最后：FastAPI 按注册顺序匹配，前面已注册的 API 路由优先命中。
-@app.get("/{full_path:path}", include_in_schema=False)
-async def spa_fallback(full_path: str):
-    """非 API 的未知路径交还给前端，避免手输 `:8000/police` 拿到 404 JSON。"""
-    # /api 下拼错的路径应该老实报 404，不能被前端页面盖掉，否则接口调试会非常迷惑
-    if full_path.startswith(("api/", "docs", "redoc", "openapi.json")):
-        raise HTTPException(status_code=404, detail="Not Found")
-    if not _FRONTEND_DIR.exists():
-        raise HTTPException(status_code=404, detail="前端未打包，请先 npm run build")
-
-    # favicon.svg / icons.svg 这类根级静态文件直接返回
-    root = _FRONTEND_DIR.resolve()
-    candidate = (_FRONTEND_DIR / full_path).resolve()
-    # resolve 之后必须仍在 dist 内：否则 /../../ 就能顺着把任意文件读出去
-    if full_path and candidate.is_file() and candidate.is_relative_to(root):
-        return FileResponse(candidate)
-    return FileResponse(_FRONTEND_DIR / "index.html")

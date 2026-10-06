@@ -7,7 +7,6 @@
     <div class="block">
       <p class="block-title">责任认定</p>
       <p class="resp">{{ result.responsibility }}</p>
-      <p v-if="result.red_light" class="red-light">是否闯红灯：<b>{{ result.red_light }}</b></p>
       <p class="conf">
         判定置信度 <span :class="['conf-val', confLevel]">{{ result.confidence }}%</span>
         <span v-if="result.confidence < 60" class="conf-tip">（置信度较低，仅供参考）</span>
@@ -44,20 +43,6 @@
         </li>
       </ul>
     </div>
-
-    <!-- 现场照片证据（单帧检测：只有目标与信号灯，没有速度方向） -->
-    <div v-if="result.photos?.length" class="block">
-      <p class="block-title">现场照片证据（{{ result.photos.length }} 张）</p>
-      <ul class="photos">
-        <li v-for="(p, i) in result.photos" :key="i">
-          <span class="photo-name">{{ p.name }}</span>
-          <span class="photo-sum">检出 {{ p.summary }} · 信号灯 {{ p.trafficLight }}</span>
-          <span v-if="p.note" class="photo-note">{{ p.note }}</span>
-        </li>
-      </ul>
-    </div>
-
-    <p v-if="result.note" class="note">{{ result.note }}</p>
   </div>
 </template>
 
@@ -88,8 +73,6 @@ h3 { color: #1e293b; margin-bottom: 12px; }
 .block { margin-bottom: 16px; }
 .block-title { font-size: 13px; color: #94a3b8; margin: 0 0 8px; font-weight: 600; }
 .resp { font-size: 18px; color: #1e293b; font-weight: 700; margin: 0 0 4px; }
-.red-light { font-size: 14px; color: #64748b; margin: 4px 0 0; }
-.red-light b { color: #dc2626; }
 .conf { font-size: 13px; color: #64748b; margin: 0; }
 .conf-val { font-weight: 700; }
 .conf-val.high { color: #16a34a; }
@@ -107,18 +90,4 @@ h3 { color: #1e293b; margin-bottom: 12px; }
 .reasons li, .laws li { font-size: 14px; color: #334155; line-height: 1.6; }
 .clause { display: block; font-weight: 600; color: #1e293b; }
 .law-summary { color: #475569; }
-
-.photos { margin: 0; padding-left: 20px; }
-.photos li { font-size: 13px; color: #334155; line-height: 1.6; margin-bottom: 4px; }
-.photo-name { font-weight: 600; }
-.photo-sum { color: #475569; }
-.photo-note { display: block; color: #94a3b8; font-size: 12px; }
-.note {
-  margin: 16px 0 0;
-  padding-top: 12px;
-  border-top: 1px dashed #e2e8f0;
-  font-size: 12px;
-  color: #94a3b8;
-  line-height: 1.6;
-}
 </style>
