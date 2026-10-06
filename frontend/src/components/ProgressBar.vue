@@ -1,12 +1,12 @@
 <template>
   <div class="progress-bar">
     <div class="track"><div class="fill" :style="{ width: pct + '%' }"></div></div>
-    <p class="text">{{ pct < 100 ? 'AI 分析中…' : '分析完成' }}（{{ pct }}%）</p>
+    <p class="text">{{ label || (pct < 100 ? 'AI 分析中…' : '分析完成') }}（{{ pct }}%）</p>
   </div>
 </template>
 
 <script setup lang="ts">
-defineProps<{ pct: number }>()
+defineProps<{ pct: number; label?: string }>()
 </script>
 
 <style scoped>

@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "generated_by": "P1",
   "generated_at": "2026-10-03",
-  "description": "RoadMind 判定模块评测集 v1（10 场景）。供 P3 用 services/judge 跑判定并回归，断言责任占比、法条引用、置信度阈值。",
+  "description": "云智达 判定模块评测集 v1（10 场景）。供 P3 用 services/judge 跑判定并回归，断言责任占比、法条引用、置信度阈值。",
   "eval_assert": {
     "责任占比(hit)": "期望结论在 primary/secondary/equal/none 中匹配，或归入 low_confidence 兜底",
     "法条引用": "期望引用的法条关键条款命中 basis",

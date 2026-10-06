@@ -44,3 +44,13 @@ data/chroma/*
 *.mp4
 *.mov
 *.zip
+
+# 模型权重（本地自行下载，不入库）
+*.pt
+*.part
+
+# 后端运行时产物（数据库 + 上传件）
+backend/data/
+
+# 临时验证脚本
+backend/_verify_gate2_tmp.py

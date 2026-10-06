@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import time
 
+from app.core.config import settings
+from app.core.db import upsert_case
 from app.services.llm import _as_pairs
 from app.services.rag import RagService, _NGramEmbedding
 from app.schemas.models import RetrievedDoc
@@ -148,3 +150,47 @@ def test_llm_prompt_accepts_pydantic_evidence():
     docs = [RetrievedDoc(id="law-043", title="道交法 第43条", content="保持安全距离")]
     assert _as_pairs(docs) == [("道交法 第43条", "保持安全距离")]
     assert _as_pairs([{"title": "T", "content": "C"}]) == [("T", "C")]
+
+
+# ---------------- 车主端研判记录（记录随后端存储，与设备无关） ----------------
+
+def test_history_returns_records_with_full_result(client):
+    """每次提交都留在后端：列表带完整结果，前端不必逐条再查详情。"""
+    task_id = client.post("/api/cases", json={"text_description": "追尾事故"}).json()["task_id"]
+    _wait_done(client, task_id)
+
+    data = client.get("/api/history").json()["data"]
+    item = next(r for r in data if r["task_id"] == task_id)
+    assert item["status"] == "done"
+    assert item["result"]["judgment"] is not None, "列表要带完整结果"
+    assert item["created_at"]
+
+
+def test_history_keeps_uploaded_filename(client, monkeypatch, tmp_path):
+    """视频原始文件名要一起落库，列表才分得清是哪一次提交。"""
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path / "uploads"))
+
+    resp = client.post(
+        "/api/videos",
+        files={"file": ("行车记录仪-追尾.MP4", b"not-a-real-video", "video/mp4")},
+    )
+    assert resp.status_code == 202
+    task_id = resp.json()["task_id"]
+    _wait_done(client, task_id)
+
+    # 完成时那次落库不能把创建时记下的文件名冲掉（upsert 的 filename 分支）
+    item = next(
+        r for r in client.get("/api/history").json()["data"] if r["task_id"] == task_id
+    )
+    assert item["filename"] == "行车记录仪-追尾.MP4"
+
+
+def test_history_marks_orphan_running_task_as_failed(client):
+    """进程重启后残留的"永远跑不完"的任务必须报成中断，否则前端一直转圈。"""
+    upsert_case(task_id="orphan-task", case_id="orphan-task", status="judging")
+
+    orphan = next(
+        r for r in client.get("/api/history").json()["data"] if r["task_id"] == "orphan-task"
+    )
+    assert orphan["status"] == "failed"
+    assert "中断" in orphan["error"]

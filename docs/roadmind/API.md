@@ -61,6 +61,32 @@
 { "task_id": "adf72a071510", "status": "pending", "progress": 0.0 }
 ```
 
+## 2.1 统一提交入口（视频 / 文字 / 现场照片）
+
+`POST /api/submissions` — **202**（`multipart/form-data`）
+
+前端（车主端与交警端共用的提交表单）实际走的就是这个入口。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `description` | text，可选 | 用户补充的文字描述，进判定上下文的「事故描述」 |
+| `video` | file，可选 | 行车记录仪视频（mp4/mov/avi/mkv，≤ `max_upload_mb`） |
+| `photos` | file[]，可选 | 现场照片，**同名 key 多次传**；≤3 张、每张 ≤10MB、仅 `image/*` |
+
+- 三者**任意组合**、至少给一个：全空返回 `EMPTY_INPUT`（422）；
+  照片超限 `TOO_MANY_PHOTOS`，类型/体积不符 `INVALID_FILE` / `FILE_TOO_LARGE`。
+- **文字与场景证据是两份独立输入，合并后同时进判定** —— 不再是有视频就把文字丢掉。
+- 照片走单帧检测（`app/algo/photo_detector.py`），证据落在 `result.scene.photos`
+  （字段见 SCENE-SCHEMA v4）；照片是静态证据，**不参与事故门控**。
+- 返回结构与 `POST /api/cases` 相同（TaskInfo）。
+
+```json
+{ "task_id": "adf72a071510", "status": "pending", "progress": 0.0 }
+```
+
+> `POST /api/videos`（仅视频）与 `POST /api/cases`（JSON，文字/已有媒体）保留不变，
+> 分别供简单上传与带 `video_id` 的调用方使用。
+
 ## 3. 任务状态查询（D2）
 
 `GET /api/tasks/{task_id}/status`
@@ -71,6 +97,38 @@
 ```json
 { "task_id": "adf72a071510", "status": "done", "progress": 1.0, "result": { "..." } }
 ```
+
+## 3.1 研判记录（车主端记录列表 / 跨设备）
+
+`GET /api/history?limit=20&offset=0`
+
+- 记录落在后端 SQLite（创建与完成时各写一次），**换浏览器、换设备看到的是同一份**，
+  前端不再依赖 localStorage。
+- 不鉴权：`POST /api/videos` 本身就允许匿名提交，车主端也没有账号概念；
+  等记录要按账号归属时再加 owner 过滤。
+- `status` 非终态但后端内存里已无该任务（进程重启留下的半截任务）→ 返回
+  `failed` + `error`「后端重启，该次分析已中断」，避免前端一直转圈。
+- 列表项**带完整 `result`**（车主端直接渲染历史结论，不必逐条再查详情）。
+
+```json
+{ "code": 0, "msg": "ok", "data": [
+  {
+    "task_id": "adf72a071510",
+    "filename": "行车记录仪.mp4",
+    "input_text": "对方压实线变道",
+    "photos": ["adf72a071510_p0.jpg"],
+    "status": "done",
+    "accident_type": "追尾",
+    "error": null,
+    "created_at": "2026-10-06T02:06:29+00:00",
+    "updated_at": "2026-10-06T02:06:35+00:00",
+    "result": { "...": "scene / judgment / response 结构同 §4" }
+  }
+] }
+```
+
+> `filename` 只在本次提交带了视频时非空（纯照片/文字提交为空串）；`photos` 是落盘的存储名，
+> 仅用于显示"交了几张"，原图不回显。
 
 ## 4. 任务结果查询（D2）
 
@@ -142,6 +200,6 @@
   python scripts/index_rules.py                       # 内置规则入库
   python scripts/index_rules.py --dir ../data/cases   # 从目录 .md 入库
   ```
-- **P4 联调占位**：`POST /api/upload`、`POST /api/audit` 为前端早期联调的固定返回，保留以免破坏
-  `frontend/src/components/UploadZone.vue` 与 `views/PoliceDetail.vue`；真实链路请走上面的
-  `POST /api/cases` → `GET /api/tasks/{id}/result`。
+- **P4 联调占位**：`POST /api/upload`（图片）、`POST /api/audit`（审核）是前端早期联调的**固定返回**，
+  不进链路。已无前端调用方（提交入口统一走 §2.1 的 `POST /api/submissions`）；
+  保留是为了不破坏旧联调脚本与 `views/PoliceDetail.vue` 的调用。

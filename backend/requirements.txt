@@ -1,8 +1,8 @@
-# RoadMind 后端依赖
+# 云智达 后端依赖
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
 langgraph==0.2.60
-langchain-core==0.3.33
+langchain-core==0.3.34
 langchain-openai==0.3.5
 pydantic==2.10.4
 pydantic-settings==2.7.1
@@ -17,5 +17,8 @@ onnxruntime==1.20.1
 PyYAML==6.0.2
 # 鉴权（D7）
 PyJWT==2.10.1
+# 视频感知真实检测（M1，app/algo/video_tracker）：会连带 torch，体积大；
+# use_mock=True 时不需要安装（导入惰性加载）
+ultralytics>=8.3.0,<9.0.0
 # 测试
 pytest==9.1.1

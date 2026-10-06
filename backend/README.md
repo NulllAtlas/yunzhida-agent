@@ -1,4 +1,4 @@
-# backend · RoadMind 后端
+# backend · 云智达 后端
 
 FastAPI + LangGraph 多智能体链路（P2 · D1–D11 完成态）。
 
@@ -47,8 +47,12 @@ uvicorn app.main:app --reload --port 8000
 
 ```bash
 cd backend
-pytest            # 16 项：主链路 / 鉴权 / WebSocket / RAG 回归
+pytest            # 51 项：主链路 / 鉴权 / WebSocket / RAG 回归 / bugfix 回归
 ```
+
+`tests/test_bugfix_regressions.py` 逐条锁住已修复缺陷，含两个**正向对照**
+（真实追尾必须穿过过检过滤并让门控放行、规则兜底必须给出事故类型）——
+没有对照就无法证明收紧阈值之后真事故还能被检出。
 
 ## 设计说明
 
