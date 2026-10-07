@@ -30,7 +30,7 @@ function toggle(i: number) {
     <div class="head">
       <span>应急处置步骤（{{ doneCount }}/{{ total }}）</span>
       <div class="bar"><div class="fill" :style="{ width: percent + '%' }"></div></div>
-      <span v-if="allDone" class="ok">✅ 全部完成，注意安全并尽快撤离到护栏外</span>
+      <span v-if="allDone" class="ok">全部完成，注意安全并尽快撤离到护栏外</span>
     </div>
 
     <label v-for="(step, i) in steps" :key="i" class="step" :class="{ done: checked[i] }">
@@ -41,25 +41,9 @@ function toggle(i: number) {
 </template>
 
 <style scoped>
-.emergency {
-  padding: 20px;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-}
-.head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-  font-size: 15px;
-  color: #334155;
-  flex-wrap: wrap;
-}
-.emergency .bar { height: 6px; background: #eee; border-radius: 3px; overflow: hidden; flex: 1; min-width: 100px; }
+.emergency .bar { height: 6px; background: #eee; border-radius: 3px; overflow: hidden; }
 .emergency .fill { height: 100%; background: #2ecc71; transition: width .3s; }
-.step { display: flex; gap: 8px; padding: 10px; border-bottom: 1px solid #f0f0f0; cursor: pointer; align-items: flex-start; font-size: 15px; }
+.step { display: flex; gap: 8px; padding: 8px; border-bottom: 1px solid #f0f0f0; }
 .step.done span { color: #999; text-decoration: line-through; }
-.ok { color: #2ecc71; font-weight: 600; width: 100%; margin-top: 4px; }
+.ok { color: #2ecc71; font-weight: 600; }
 </style>

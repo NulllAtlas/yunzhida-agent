@@ -20,8 +20,10 @@ class RoadMindState(TypedDict, total=False):
 
     case_id: str
     input_text: str
-    # 已上传视频的本地路径（可选；由 API 层解析 video_id 得到）
-    video_path: Optional[str]
+    # 视频等媒体文件路径（存在时走真实视频感知，缺失/失败降级文字）
+    media_path: Optional[str]
+    # 随附现场照片的落盘路径（照片做单帧检测，证据进 scene.photos）
+    photo_paths: list[str]
 
     # M1 感知结果
     scene: Optional[Scene]

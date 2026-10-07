@@ -1,4 +1,4 @@
-# RUNBOOK · RoadMind 后端运行手册（P2 · D10）
+# RUNBOOK · 云智达 后端运行手册（P2 · D10）
 
 > 适用版本：backend v0.2.0（D1–D11 完成态）
 > 目标：任何人拿到仓库后，能在 5 分钟内把服务跑起来、换模型、加规则、排障。
@@ -75,14 +75,6 @@ docker compose up --build
 - 超时与重试：`LLM_TIMEOUT_S`（默认 60s）、`LLM_MAX_RETRIES`（默认 2）。
 - 容器部署时通过环境变量注入（见 `docker-compose.yml` 的 `api.environment`）。
 
-> 非 mock 代码路径（请求拼装 / 鉴权头 / 模型选择 / JSON 解析 / 失败回退）已由
-> `tests/test_llm_gateway.py` 用**本地假网关**离线覆盖，无需真实 Key 即可回归；
-> 拿到真实凭据后只需按上面填好 `.env`，走的即是同一段代码。
-
-> 感知服务（可选，D6）：配置 `PERCEPTION_SERVICE_URL` 指向 P3 的 `POST /perceive`，
-> 感知阶段即调用真实检测；留空或调用失败（网络/超时/结构非法）会自动回落本地文字
-> 降级场景，不影响任务成功。适配层由 `tests/test_perception_remote.py` 离线覆盖。
-
 ---
 
 ## 5. 加规则 / 加案例（RAG 入库）
@@ -107,7 +99,6 @@ python scripts/index_rules.py --dir ../data/cases    # 把 data/cases/*.md 解�
 | --- | --- | --- | --- |
 | POST | `/api/auth/register` | 注册（owner / police） | - |
 | POST | `/api/auth/login` | 登录换取 JWT | - |
-| POST | `/api/uploads/video` | 上传视频，返回 `video_id`（201） | - |
 | POST | `/api/cases` | 创建案件，启动多智能体链路（202） | - |
 | GET | `/api/tasks/{id}/status` | 任务状态与进度 | - |
 | GET | `/api/tasks/{id}/result` | 任务结果（处理中返回 202） | - |
@@ -132,14 +123,6 @@ python scripts/index_rules.py --dir ../data/cases    # 把 data/cases/*.md 解�
 | 任务一直 `processing` | LLM 网关不通且未回退 | 正常应回退规则；检查日志 `roadmind.access` |
 | 401 / 403 | 未带 Token 或角色不符 | 先 `POST /api/auth/login`，交警接口需 police 角色 |
 | 案件列表为空 | 案件只在任务完成后落库 | 等任务 `done` 后再查 |
-| 视频案件 `scene.source` 仍是 `text` | 视频不在 `UPLOAD_DIR` 下或无法解码 | 确认 `video_id` 指向 `data/uploads` 中真实文件 |
-| 抽帧太少 / 太慢 | 受分帧上限约束 | 调 `VIDEO_MAX_FRAMES` / `FRAME_MAX_WIDTH` / `VIDEO_EXTRACT_TIMEOUT_S` |
-
-**视频分帧参数（D8 大视频策略）**：大视频不逐帧解码，按 `VIDEO_MAX_FRAMES` 均匀抽样，
-用 `CAP_PROP_POS_MSEC` 直接定位采样点，长边缩放到 `FRAME_MAX_WIDTH`；超过
-`VIDEO_MAX_DURATION_S` 只采样并标记 `truncated`，抽帧总耗时超过 `VIDEO_EXTRACT_TIMEOUT_S`
-即熔断；任何失败都回落文字降级、不影响任务成功。关键帧落盘在
-`FRAMES_DIR/{task_id}/`，中间帧路径写入 `scene.events[*].keyframe`。
 
 日志：`logging` 统一格式，请求日志带耗时；响应头 `X-Process-Time-ms` 可直接观测单请求耗时。
 
@@ -152,6 +135,6 @@ python scripts/index_rules.py --dir ../data/cases    # 把 data/cases/*.md 解�
 - [x] 数据：`data/cases/*.md` 案例（RAG 入库）、`data/eval/eval_v1.json` 评测集
 - [x] 接口文档：`docs/roadmind/API.md`、`docs/roadmind/CONTRACTS.md`
 - [x] 部署：`docker-compose.yml` + `backend/Dockerfile` + `frontend/Dockerfile`
-- [x] 测试：`cd backend && pytest`（31 项，覆盖主链路 / 鉴权 / 视频上传 / WS / RAG / 视频分帧 / 网关与感知服务离线回归）
+- [x] 测试：`cd backend && pytest`（16 项，覆盖主链路 / 鉴权 / WS / RAG 回归）
 - [x] 演示说明：本 RUNBOOK
 - [ ] 现场演示环境（P1 彩排时由 P2 起环境）

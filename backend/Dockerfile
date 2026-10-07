@@ -1,4 +1,4 @@
-# RoadMind 后端镜像（D9）
+# 云智达 后端镜像（D9）
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

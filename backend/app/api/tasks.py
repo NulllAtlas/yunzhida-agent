@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
 from app.core.config import settings
@@ -29,7 +30,17 @@ _STEP_MAP: dict[str, tuple[str, float]] = {
     "retrieving": ("retrieving", 0.4),
     "judging": ("judging", 0.6),
     "responding": ("responding", 0.8),
+    "aggregating": ("aggregating", 0.9),
     "done": ("done", 1.0),
+}
+
+# 节点名 → 阶段。节点**开始执行**时即可推送，不必等它跑完。
+_NODE_STEP: dict[str, str] = {
+    "perceive": "perceiving",
+    "retrieve": "retrieving",
+    "judge": "judging",
+    "respond": "responding",
+    "aggregate": "aggregating",
 }
 
 _TERMINAL = ("done", "failed")
@@ -39,22 +50,30 @@ class TaskManager:
     def __init__(self) -> None:
         self._tasks: dict[str, TaskInfo] = {}
         self._input_texts: dict[str, str] = {}
+        self._media_paths: dict[str, str | None] = {}
+        self._filenames: dict[str, str] = {}
+        self._photo_paths: dict[str, list[str]] = {}
         self._subscribers: dict[str, set[asyncio.Queue[dict]]] = {}
+        # 持有后台任务的强引用：asyncio 只保存弱引用，create_task 的返回值若无人接管，
+        # 任务可能在执行途中被 GC 回收，"任务莫名消失/卡住"就是这么来的。
+        self._bg_tasks: set[asyncio.Task] = set()
         self._semaphore = asyncio.Semaphore(settings.max_concurrency)
         # 指标（D8）
         self.metrics: dict[str, int] = {"created": 0, "running": 0, "done": 0, "failed": 0}
-        # D8：视频路径透传给感知节点做抽帧（避免参数在多层调用间扩散）
-        self._video_paths: dict[str, str] = {}
 
     # ---------- 状态 ----------
 
-    def create(self, input_text: str = "", video_path: str | None = None) -> TaskInfo:
+    def create(self, input_text: str = "", media_path: str | None = None,
+               filename: str = "", photo_paths: list[str] | None = None) -> TaskInfo:
         task = TaskInfo(task_id=uuid.uuid4().hex[:12])
         self._tasks[task.task_id] = task
         self.metrics["created"] += 1
         self._input_texts[task.task_id] = input_text
-        if video_path:
-            self._video_paths[task.task_id] = video_path
+        self._media_paths[task.task_id] = media_path
+        # 记下原始文件名，落库后车主端列表才能显示"哪一次提交"
+        self._filenames[task.task_id] = filename
+        # 随附现场照片（落库用；感知节点从 state 里拿的是同一份）
+        self._photo_paths[task.task_id] = list(photo_paths or [])
         self._persist(task, result=None)
         return task
 
@@ -93,22 +112,44 @@ class TaskManager:
 
     # ---------- 执行 ----------
 
-    async def run(self, task_info: TaskInfo, input_text: str) -> TaskInfo:
-        """把任务丢到后台协程执行，立即返回（HTTP 不阻塞）。"""
-        asyncio.create_task(self._work(task_info, input_text))
+    async def run(self, task_info: TaskInfo, input_text: str,
+                  media_path: str | None = None,
+                  photo_paths: list[str] | None = None) -> TaskInfo:
+        """把任务丢到后台协程执行，立即返回（HTTP 不阻塞）。
+
+        任务完成后由回调从 _bg_tasks 移除，避免强引用集合无限增长。
+        """
+        task = asyncio.create_task(
+            self._work(task_info, input_text, media_path, photo_paths)
+        )
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
         return task_info
 
-    async def run_blocking(self, task_info: TaskInfo, input_text: str) -> TaskInfo:
+    async def run_blocking(self, task_info: TaskInfo, input_text: str,
+                           media_path: str | None = None,
+                           photo_paths: list[str] | None = None) -> TaskInfo:
         """同步执行（测试与一次性调用用）。"""
-        await self._work(task_info, input_text)
+        await self._work(task_info, input_text, media_path, photo_paths)
         return task_info
 
-    async def _work(self, task_info: TaskInfo, input_text: str) -> None:
+    async def _work(self, task_info: TaskInfo, input_text: str,
+                    media_path: str | None = None,
+                    photo_paths: list[str] | None = None) -> None:
+        # 照片路径是落盘之后才拿到的（create 时文件还没写），而落库读的是内部字典，
+        # 所以这里补登记一次，否则记录列表里 photos 永远是空的。
+        # 落库存**文件名**而不是绝对路径：接口会把这一列原样返回给前端，
+        # 不该把部署机器上的目录结构泄出去。
+        if photo_paths is not None:
+            self._photo_paths[task_info.task_id] = [
+                Path(p).name for p in photo_paths
+            ]
         async with self._semaphore:
             self.metrics["running"] += 1
             try:
                 await asyncio.wait_for(
-                    self._stream_graph(task_info, input_text), timeout=settings.task_timeout_s
+                    self._stream_graph(task_info, input_text, media_path, photo_paths),
+                    timeout=settings.task_timeout_s,
                 )
                 self.metrics["done"] += 1
                 self._persist(task_info)
@@ -122,26 +163,43 @@ class TaskManager:
                 self.metrics["running"] -= 1
         return None
 
-    async def _stream_graph(self, task_info: TaskInfo, input_text: str) -> None:
-        """逐节点消费 LangGraph 状态流，实时更新阶段与进度。"""
+    async def _stream_graph(self, task_info: TaskInfo, input_text: str,
+                            media_path: str | None = None,
+                            photo_paths: list[str] | None = None) -> None:
+        """消费 LangGraph 事件流，实时更新阶段与进度。
+
+        用 astream_events 而不是 astream(stream_mode="values")：后者的状态快照
+        只在节点**跑完之后**才产生，于是判定节点里那次最耗时的 LLM 调用期间，
+        进度会一直停在上一阶段不动。astream_events 的 on_chain_start 在节点
+        执行**前**触发，进度条才能真正跟着走。
+        """
         state: State = {
             "case_id": task_info.task_id,
             "input_text": input_text,
-            "video_path": self._video_paths.get(task_info.task_id),
+            "media_path": media_path,
+            "photo_paths": list(photo_paths or []),
             "step": "pending",
         }
-        snapshot: dict[str, Any] = {}
-        async for snapshot in graph.astream(state, stream_mode="values"):
-            step = str(snapshot.get("step") or "pending")
-            status, progress = _STEP_MAP.get(step, (task_info.status, task_info.progress))
-            task_info.status = status
-            task_info.progress = progress
-            self._publish(
-                task_info.task_id,
-                {"type": "progress", "step": step, "status": status, "progress": progress},
-            )
+        result: dict[str, Any] | None = None
+        async for event in graph.astream_events(state, version="v2"):
+            kind, name = event["event"], event.get("name")
+            if kind == "on_chain_start" and name in _NODE_STEP:
+                step = _NODE_STEP[name]
+                status, progress = _STEP_MAP.get(
+                    step, (task_info.status, task_info.progress)
+                )
+                task_info.status = status
+                task_info.progress = progress
+                self._publish(
+                    task_info.task_id,
+                    {"type": "progress", "step": step, "status": status, "progress": progress},
+                )
+            elif kind == "on_chain_end" and name == "LangGraph":
+                # 根链的 output 即最终 state
+                output = event["data"].get("output")
+                if isinstance(output, dict):
+                    result = output.get("result")
 
-        result = snapshot.get("result")
         if not result:
             raise RuntimeError("流水线未产出结果")
         task_info.result = AnalyzeResult(**result)
@@ -176,6 +234,8 @@ class TaskManager:
                 case_id=task_info.task_id,
                 status=task_info.status,
                 input_text=self._input_texts.get(task_info.task_id, ""),
+                filename=self._filenames.get(task_info.task_id, ""),
+                photos=self._photo_paths.get(task_info.task_id, []),
                 result=result if result is not None else self._result_dump(task_info),
                 error=task_info.error,
             )

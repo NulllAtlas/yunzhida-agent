@@ -1,4 +1,4 @@
-"""M1 感知节点：视频/文字 → scene。"""
+"""M1 感知节点：视频/照片/文字 → scene。"""
 from __future__ import annotations
 
 from app.graph.state import State
@@ -10,6 +10,7 @@ async def perceive_node(state: State) -> State:
     state["scene"] = await perception_service.perceive(
         state.get("case_id", "case"),
         state.get("input_text"),
-        state.get("video_path"),
+        state.get("media_path"),
+        state.get("photo_paths"),
     )
     return state
