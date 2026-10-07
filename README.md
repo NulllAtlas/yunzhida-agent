@@ -55,6 +55,11 @@ docker compose up --build   # 前端 http://localhost:8080 ，后端 http://loca
 | `docs/roadmind/RULES.md` | 8 类事故规则清单（Day2） | P1 |
 | `docs/roadmind/CASES.md` | 典型案例判例库索引（Day3） | P1 |
 | `docs/roadmind/RESPONSE-TEMPLATE.md` | 应急步骤标准模板（Day5） | P1 |
+| `docs/roadmind/CALIBRATION-AND-DEMO.md` | 判定口径 + 演示场景（Day7） | P1 |
+| `docs/roadmind/REGRESSION-REPORT.md` | 判定回归报告（Day8） | P1 |
+| `docs/roadmind/E2E-TRIAL.md` | 端到端试跑清单（Day6，待联调） | P1 |
+| `docs/roadmind/PRESENTATION.md` | 答辩材料（Day11） | P1 |
+| `docs/roadmind/P1-TODO.md` | P1 每日工作清单 | P1 |
 | `docs/roadmind/API.md` | 后端接口契约 | P2 |
 | `docs/roadmind/SCENE-SCHEMA.md` | scene.json 结构 | P3 |
 | `docs/roadmind/CONTRACTS.md` | judgment/response 契约 | P2+P3 |
