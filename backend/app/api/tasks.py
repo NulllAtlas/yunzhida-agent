@@ -194,6 +194,10 @@ class TaskManager:
                     task_info.task_id,
                     {"type": "progress", "step": step, "status": status, "progress": progress},
                 )
+            elif kind == "on_chain_end" and name == "perceive":
+                # 感知节点跑完：关键帧此刻已生成（标注了事故车辆识别框），
+                # 立刻挂到任务状态并广播 —— 对话框/前端不用等任务 done 就能反馈关键帧片段
+                self._collect_keyframes(task_info, event)
             elif kind == "on_chain_end" and name == "LangGraph":
                 # 根链的 output 即最终 state
                 output = event["data"].get("output")
@@ -211,6 +215,32 @@ class TaskManager:
         )
 
     # ---------- 内部工具 ----------
+
+    def _collect_keyframes(self, task_info: TaskInfo, event: dict) -> None:
+        """从感知节点的输出 state 里提取关键帧，挂到任务状态并广播。
+
+        兼容 scene 为 Pydantic 对象 / dict 两种形态（LangGraph 的 output
+        在内存里是对象，跨进程/序列化后是 dict）；拿不到就跳过，不影响主流程。
+        """
+        try:
+            output = event["data"].get("output")
+            scene = output.get("scene") if isinstance(output, dict) else None
+            if scene is None:
+                return
+            events = scene.get("events") if isinstance(scene, dict) else scene.events
+            kfs = [
+                ev.get("keyframe") if isinstance(ev, dict) else ev.keyframe
+                for ev in events or []
+            ]
+            kfs = [k for k in kfs if k]
+            if kfs:
+                task_info.keyframes = kfs
+                self._publish(
+                    task_info.task_id,
+                    {"type": "keyframes", "keyframes": kfs},
+                )
+        except Exception:  # noqa: BLE001 — 关键帧是展示增强，不能阻塞主流程
+            logger.exception("collect keyframes failed for task %s", task_info.task_id)
 
     def _fail(self, task_info: TaskInfo, message: str) -> None:
         task_info.status = "failed"

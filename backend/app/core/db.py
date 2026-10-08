@@ -66,6 +66,22 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_cases_created ON cases(created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS llm_models (
+                model      TEXT PRIMARY KEY,
+                base_url   TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_history (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                username    TEXT NOT NULL,
+                role        TEXT NOT NULL,
+                content     TEXT NOT NULL,
+                created_at  TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chat_user ON chat_history(username, id DESC);
             """
         )
         # 已有开发库的补列（CREATE TABLE IF NOT EXISTS 不会改老表结构）
@@ -99,6 +115,58 @@ def get_user(username: str) -> Optional[dict[str, Any]]:
         "SELECT username, password_hash, role FROM users WHERE username = ?", (username,)
     ).fetchone()
     return dict(row) if row else None
+
+
+# ---------------- 问询记录 ----------------
+
+def save_chat_message(username: str, role: str, content: str) -> None:
+    """保存一条问询记录（记录跟账号走，未登录不记录）。"""
+    if not username:
+        return
+    conn = get_conn()
+    with _lock:
+        conn.execute(
+            "INSERT INTO chat_history (username, role, content, created_at) VALUES (?, ?, ?, ?)",
+            (username, role, content, _now()),
+        )
+        conn.commit()
+
+
+def load_chat_history(username: str, limit: int = 50) -> list[dict[str, Any]]:
+    """某账号的问询记录（最近 limit 条，按时间正序返回，可直接喂给 chatbot）。"""
+    if not username:
+        return []
+    rows = get_conn().execute(
+        """
+        SELECT role, content FROM (
+            SELECT id, role, content FROM chat_history
+            WHERE username = ? ORDER BY id DESC LIMIT ?
+        ) ORDER BY id ASC
+        """,
+        (username, limit),
+    ).fetchall()
+    return [{"role": r["role"], "content": r["content"]} for r in rows]
+
+
+# ---------------- 模型列表 ----------------
+
+def list_models() -> list[dict[str, Any]]:
+    rows = get_conn().execute(
+        "SELECT model, base_url, created_at FROM llm_models ORDER BY created_at DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_model(model: str, base_url: str = "") -> bool:
+    """添加模型（重复返回 False）。"""
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO llm_models (model, base_url, created_at) VALUES (?, ?, ?)",
+            (model, base_url, _now()),
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
 
 # ---------------- 案件 ----------------

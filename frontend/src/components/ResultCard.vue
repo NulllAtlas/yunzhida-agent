@@ -45,6 +45,17 @@
       </ul>
     </div>
 
+    <!-- 事故车辆识别框：视频感知为每个碰撞事件生成的标注关键帧 -->
+    <div v-if="result.keyframes?.length" class="block">
+      <p class="block-title">事故车辆识别框（{{ result.keyframes.length }} 帧）</p>
+      <div class="keyframes">
+        <figure v-for="(k, i) in result.keyframes" :key="i">
+          <img :src="k.url" :alt="k.caption" loading="lazy" />
+          <figcaption>{{ k.caption }}</figcaption>
+        </figure>
+      </div>
+    </div>
+
     <!-- 现场照片证据（单帧检测：只有目标与信号灯，没有速度方向） -->
     <div v-if="result.photos?.length" class="block">
       <p class="block-title">现场照片证据（{{ result.photos.length }} 张）</p>
@@ -113,6 +124,16 @@ h3 { color: #1e293b; margin-bottom: 12px; }
 .photo-name { font-weight: 600; }
 .photo-sum { color: #475569; }
 .photo-note { display: block; color: #94a3b8; font-size: 12px; }
+
+.keyframes { display: flex; flex-wrap: wrap; gap: 12px; }
+.keyframes figure { margin: 0; width: 240px; }
+.keyframes img {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  display: block;
+}
+.keyframes figcaption { font-size: 12px; color: #64748b; margin-top: 4px; }
 .note {
   margin: 16px 0 0;
   padding-top: 12px;

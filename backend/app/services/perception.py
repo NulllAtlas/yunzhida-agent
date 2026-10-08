@@ -75,10 +75,19 @@ class PerceptionService:
         """真实感知：视频 → YOLO 检测+追踪 → scene dict → Scene。
 
         检测为 CPU/GPU 密集同步操作，放线程池执行避免阻塞事件循环。
+        产出目录传给检测器：碰撞事件会生成标注了事故车辆识别框的关键帧。
         """
-        raw = await asyncio.to_thread(self._get_tracker().perceive, media_path)
+        raw = await asyncio.to_thread(
+            self._get_tracker().perceive, media_path, settings.output_dir
+        )
         raw["scene_id"] = scene_id
-        return Scene(**raw)
+        scene = Scene(**raw)
+        # keyframe 存的是落盘文件名；转成 /outputs/ 下的可访问 URL
+        # （main.py 把 outputs 目录静态挂载在 /outputs），前端直接展示
+        for ev in scene.events:
+            if ev.keyframe:
+                ev.keyframe = f"/outputs/{ev.keyframe}"
+        return scene
 
     def _degraded_scene(self, scene_id: str) -> Scene:
         """视频检测失败时的降级场景。

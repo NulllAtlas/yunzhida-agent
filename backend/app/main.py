@@ -11,7 +11,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app.api import auth_router, cases_router, config_router, police_router, progress_router
+from app.api import (
+    auth_router,
+    cases_router,
+    chat_router,
+    config_router,
+    police_router,
+    progress_router,
+)
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.errors import register_exception_handlers
@@ -43,20 +50,13 @@ app.include_router(auth_router)      # D7：注册 / 登录 / JWT
 app.include_router(cases_router)     # D1/D2：创建案件 / 状态 / 结果 / 指标
 app.include_router(police_router)    # D7：交警端案件列表 / 详情 / 草稿导出
 app.include_router(progress_router)  # D4/D5：WebSocket 进度推送
-app.include_router(config_router)    # 运行时切换大模型（首页模型配置面板）
+app.include_router(config_router)    # 运行时切换大模型（界面右上角模型选择）
+app.include_router(chat_router)      # 对话接口（多轮对话透传 MoMA）
 
-# 静态前端（打包产物 dist），便于本地一键演示
-_FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-if _FRONTEND_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=_FRONTEND_DIR / "assets"), name="assets")
-
-
-@app.get("/", include_in_schema=False)
-async def index():
-    index_file = _FRONTEND_DIR / "index.html"
-    if index_file.exists():
-        return FileResponse(index_file)
-    return {"message": "云智达 API 运行中。前端未打包，请先 npm run build。"}
+# 事故车辆标注关键帧：视频感知后落在 outputs 目录，这里静态暴露成 /outputs/*，
+# 界面直接用 URL 展示标注图。必须在 Gradio mount("/") 之前注册，否则被根路径接管
+Path(settings.output_dir).mkdir(parents=True, exist_ok=True)
+app.mount("/outputs", StaticFiles(directory=settings.output_dir), name="outputs")
 
 
 @app.get("/health")
@@ -135,22 +135,17 @@ async def audit(req: AuditReq):
     return {"code": 0, "msg": f"已{req.action}", "data": {"id": req.id, "action": req.action}}
 
 
-# ==================== SPA 回落 ====================
-# 作用等同前端 nginx.conf 里的 `try_files $uri $uri/ /index.html`。
-# 必须注册在最后：FastAPI 按注册顺序匹配，前面已注册的 API 路由优先命中。
-@app.get("/{full_path:path}", include_in_schema=False)
-async def spa_fallback(full_path: str):
-    """非 API 的未知路径交还给前端，避免手输 `:8000/police` 拿到 404 JSON。"""
-    # /api 下拼错的路径应该老实报 404，不能被前端页面盖掉，否则接口调试会非常迷惑
-    if full_path.startswith(("api/", "docs", "redoc", "openapi.json")):
-        raise HTTPException(status_code=404, detail="Not Found")
-    if not _FRONTEND_DIR.exists():
-        raise HTTPException(status_code=404, detail="前端未打包，请先 npm run build")
+# ==================== 后端主界面（Gradio） ====================
+# Gradio（豆包风格，车主端/交警端模式切换）挂载到根路径，
+# 访问 http://127.0.0.1:8000/ 即完整智能体界面。
+# 必须注册在所有 API 路由之后：FastAPI 按注册顺序匹配，/api/* 与 /health 优先命中，
+# 其余路径（根路径）落到 Gradio 界面。
+import gradio as gr
 
-    # favicon.svg / icons.svg 这类根级静态文件直接返回
-    root = _FRONTEND_DIR.resolve()
-    candidate = (_FRONTEND_DIR / full_path).resolve()
-    # resolve 之后必须仍在 dist 内：否则 /../../ 就能顺着把任意文件读出去
-    if full_path and candidate.is_file() and candidate.is_relative_to(root):
-        return FileResponse(candidate)
-    return FileResponse(_FRONTEND_DIR / "index.html")
+from app.ui.gradio_ui import _CUSTOM_CSS
+from app.ui.gradio_ui import demo as gradio_demo
+
+# css 须通过 mount 传入（Gradio 6.0 中 css/theme 从 Blocks 构造器移到了 launch/mount）
+app = gr.mount_gradio_app(
+    app, gradio_demo, path="/", css=_CUSTOM_CSS, footer_links=[]
+)

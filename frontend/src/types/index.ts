@@ -23,6 +23,13 @@ export interface AIResult {
   red_light?: string       // 是否闯红灯：是 / 否 / 无法确认
   note?: string            // 免责声明（后端 judgment.note）
   photos?: PhotoEvidenceView[]  // 随附现场照片的检测证据（没交照片时为 undefined）
+  keyframes?: KeyframeView[]    // 事故车辆识别框标注帧（视频碰撞事件，无标注时为 undefined）
+}
+
+/** 一张标注了事故车辆识别框的关键帧（视频感知生成，/outputs/ 下的 URL）。 */
+export interface KeyframeView {
+  url: string      // 图片地址（后端 /outputs/ 静态路径）
+  caption: string  // 说明，如「t≈12s · 事故车辆识别框」
 }
 
 /** 一张现场照片的检测证据（给界面看的归纳版，原始数据在 BackendPhotoEvidence）。 */
@@ -94,13 +101,24 @@ export interface BackendPhotoEvidence {
   note: string           // 静态局限或"检测未运行"的说明
 }
 
+/** 后端 scene.events 的一项：碰撞事件（含事故车辆识别框与标注关键帧）。 */
+export interface BackendSceneEvent {
+  time: number
+  type: string
+  participants: number[]
+  confidence: number
+  boxes: unknown[]       // 碰撞时刻双方识别框（归一化），界面直接用标注帧，不用它
+  keyframe?: string      // 标注了事故车辆识别框的关键帧 URL（无标注时缺省）
+  geometry?: string
+}
+
 export interface BackendScene {
   scene_id: string
   // video = 真实视频检测；photo = 现场照片单帧检测；text_fallback = 传了视频但检测失败降级；
   // text = 文字输入；mock
   source: string
   vehicles: unknown[]
-  events: unknown[]
+  events: BackendSceneEvent[]
   // 随附现场照片的检测证据（没交照片时为空数组/缺省）
   photos?: BackendPhotoEvidence[]
   road: string

@@ -29,8 +29,12 @@ class TextSupplement(BaseModel):
 # ---------- M1 感知输出 ----------
 class TrajectoryPoint(BaseModel):
     t: float = Field(..., description="时间（秒）")
-    x: float = Field(..., description="归一化横坐标 0-1")
-    y: float = Field(..., description="归一化纵坐标 0-1")
+    x: float = Field(..., description="归一化横坐标 0-1（框中心）")
+    y: float = Field(..., description="归一化纵坐标 0-1（框中心）")
+    # 框宽高（归一化 0-1）。视频轨迹点里带着它，前端/结果里才能画出
+    # 每个采样时刻的识别框；mock/文字场景没有框，默认 0。
+    w: float = 0.0
+    h: float = 0.0
     speed_kmh: float = 0.0
 
 
@@ -41,11 +45,29 @@ class Vehicle(BaseModel):
     max_speed_kmh: float = 0.0
 
 
+class EventBox(BaseModel):
+    """碰撞事件发生时刻某个参与者的识别框（归一化中心 + 宽高）。
+
+    事故车辆是谁、框在哪，事件本身就带着 —— 前端据此在关键帧上
+    标注事故车辆，不用重新跑检测。
+    """
+
+    id: int
+    type: str = "car"
+    x: float = 0.0
+    y: float = 0.0
+    w: float = 0.0
+    h: float = 0.0
+
+
 class SceneEvent(BaseModel):
     time: float
     type: str = "collision"  # collision / near_miss / signal_change ...
     participants: list[int] = []
     confidence: float = 0.0  # 事件置信度（感知层输出，事故门控消费）
+    # 碰撞时刻双方的识别框（归一化），前端/关键帧标注消费
+    boxes: list[EventBox] = []
+    # 标注了事故车辆识别框的关键帧图片（可访问 URL 或落盘文件名，无标注时为空）
     keyframe: Optional[str] = None
     # 碰撞几何（追尾/侧碰/正碰…，由 algo/collision.py 算出）。
     # 早先没这个字段，scene_summary.describe_events 读 geometry 恒为空 ——
@@ -198,3 +220,6 @@ class TaskInfo(BaseModel):
     progress: float = 0.0
     error: Optional[str] = None
     result: Optional[AnalyzeResult] = None
+    # 视频感知阶段产出的关键帧（标注了事故车辆识别框，/outputs/ 下的 URL）。
+    # 感知完成即可用，不必等任务 done —— 对话框/前端据此实时反馈关键帧片段
+    keyframes: list[str] = []

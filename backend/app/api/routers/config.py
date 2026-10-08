@@ -99,3 +99,47 @@ async def set_llm_config(payload: LLMConfigIn) -> dict:
     )
     llm_service.reset_client()   # 丢弃缓存的客户端，下次调用用新凭据重建
     return {"code": 0, "msg": "ok", "data": _snapshot()}
+
+
+class ModelIn(BaseModel):
+    model: str = Field(default="", description="模型 ID")
+
+
+@router.get("/models")
+async def get_models() -> dict:
+    """已保存的模型列表 + 当前模型。"""
+    from app.core.db import list_models
+
+    return {
+        "code": 0,
+        "msg": "ok",
+        "data": {"models": list_models(), "current": settings.model_strong},
+    }
+
+
+@router.post("/models")
+async def add_model(payload: ModelIn) -> dict:
+    """添加模型：先检测连接是否顺畅（沿用当前 url/key），成功才入库。"""
+    _require_editable()
+    model = (payload.model or "").strip()
+    if not model:
+        raise ApiError("MISSING_MODEL", "请填写模型名称", 422)
+
+    base_url = settings.moma_base_url
+    api_key = settings.moma_api_key
+    probe = await llm_service.probe(base_url, api_key, model)
+    if not probe.get("ok"):
+        return {
+            "code": -1,
+            "msg": "模型连接失败，未添加",
+            "data": {"probe": probe, "added": False},
+        }
+
+    from app.core.db import add_model as db_add_model
+
+    added = db_add_model(model, base_url)
+    return {
+        "code": 0,
+        "msg": f"已添加：{model}（连接正常）" if added else f"{model} 已存在",
+        "data": {"probe": probe, "added": added},
+    }

@@ -8,7 +8,9 @@ import type {
   AIResult,
   AnalyzeResult,
   BackendPhotoEvidence,
+  BackendSceneEvent,
   HistoryRecord,
+  KeyframeView,
   PartyFault,
   PhotoEvidenceView,
   SubmissionEntry,
@@ -99,7 +101,18 @@ export function toAIResult(r: AnalyzeResult | null): AIResult | null {
     // 免责声明是法务要求，单独透传，不能混进应急步骤里当可勾选的操作项
     note: j.note,
     photos: toPhotoViews(r.scene?.photos),
+    keyframes: toKeyframeViews(r.scene?.events),
   }
+}
+
+/** 视频碰撞事件的标注关键帧 → 界面视图（只有真带图的才进列表）。 */
+export function toKeyframeViews(events?: BackendSceneEvent[]): KeyframeView[] {
+  return (events || [])
+    .filter((e) => !!e.keyframe)
+    .map((e) => ({
+      url: e.keyframe as string,
+      caption: `t≈${e.time}s · 事故车辆识别框`,
+    }))
 }
 
 // 照片检出目标类型的中文名（与 backend/app/algo/scene_summary.py 的 _PHOTO_TYPE_LABEL 对齐）

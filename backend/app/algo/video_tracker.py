@@ -9,11 +9,14 @@ media_path 输入时调用。使用 ultralytics model.track + bytetrack，
 """
 from __future__ import annotations
 
+import logging
 import math
 from collections import Counter
 from pathlib import Path
 
 import cv2
+
+logger = logging.getLogger(__name__)
 
 
 _CLS_TO_SCENE_TYPE = {
@@ -286,7 +289,17 @@ class VideoTracker:
                                "type": "collision" if overlap else "near_miss",
                                "participants": [ids[i], ids[j]],
                                "confidence": confidence,
-                               "geometry": collision_geometry(p, q)})
+                               "geometry": collision_geometry(p, q),
+                               # 碰撞时刻双方的识别框（归一化中心+宽高）：
+                               # 事故车辆是谁、框在哪，事件本身就带着
+                               "boxes": [
+                                   {"id": ids[i], "type": p.get("type", "car"),
+                                    "x": bt.get("x", 0.0), "y": bt.get("y", 0.0),
+                                    "w": bt.get("w", 0.0), "h": bt.get("h", 0.0)},
+                                   {"id": ids[j], "type": q.get("type", "car"),
+                                    "x": bq.get("x", 0.0), "y": bq.get("y", 0.0),
+                                    "w": bq.get("w", 0.0), "h": bq.get("h", 0.0)},
+                               ]})
         return events
 
     def _light_states(self, video_path: str, tracks: dict) -> list[dict]:
@@ -333,13 +346,90 @@ class VideoTracker:
             })
         return out
 
-    def perceive(self, video_path: str) -> dict:
-        """返回 scene 字典（dict 形式，符合 SCENE-SCHEMA）。"""
+    # 标注框配色（BGR）：不同参与者不同颜色，一眼分清事故双方
+    _BOX_COLORS = [(0, 0, 255), (0, 200, 0), (255, 160, 0), (200, 0, 200)]
+
+    def _draw_boxes(self, frame, boxes: list[dict]) -> None:
+        """在一帧上画出识别框与「#id 类型」标签（归一化框 → 像素）。"""
+        fh, fw = frame.shape[:2]
+        for i, b in enumerate(boxes):
+            cx, cy = b.get("x", 0.0) * fw, b.get("y", 0.0) * fh
+            w, h = b.get("w", 0.0) * fw, b.get("h", 0.0) * fh
+            x1, y1 = int(max(0, cx - w / 2)), int(max(0, cy - h / 2))
+            x2, y2 = int(min(fw - 1, cx + w / 2)), int(min(fh - 1, cy + h / 2))
+            if x2 - x1 < 4 or y2 - y1 < 4:
+                continue
+            color = self._BOX_COLORS[i % len(self._BOX_COLORS)]
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            label = f"#{b.get('id', '?')} {b.get('type', '')}"
+            ty = max(16, y1 - 6)
+            cv2.putText(frame, label, (x1, ty), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5, color, 1, cv2.LINE_AA)
+
+    def annotate_keyframes(self, video_path: str, events: list[dict],
+                           scene_id: str, output_dir: str) -> None:
+        """为每个碰撞事件生成标注关键帧：在碰撞时刻附近的采样帧上
+        画出事故车辆（事件参与者）的识别框，落盘到 output_dir，
+        并把文件名写回事件 keyframe 字段。
+
+        轨迹/框都是按 vid_stride 采样的，事件 time 反推的帧号对齐到
+        采样帧；重放一次视频，命中帧号时把该帧对应事件的双方框画上去。
+        生成失败只记日志不抛出 —— 标注是展示增强，不能阻塞主流程。
+        """
+        if not events:
+            return
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            logger.warning("annotate keyframes: cannot open video %s", video_path)
+            return
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        try:
+            wanted: dict[int, list[int]] = {}
+            for idx, ev in enumerate(events):
+                if not (ev.get("boxes") or []):
+                    continue
+                frame_no = int(round(ev.get("time", 0.0) * fps / self._vid_stride))
+                wanted.setdefault(max(0, frame_no) * self._vid_stride, []).append(idx)
+            if not wanted:
+                return
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+            remaining = dict(wanted)
+            frame_idx = 0
+            while remaining and frame_idx <= max(remaining):
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                if frame_idx in remaining:
+                    for ev_idx in remaining[frame_idx]:
+                        ev = events[ev_idx]
+                        self._draw_boxes(frame, ev["boxes"])
+                        name = f"{scene_id}_ev{ev_idx}_t{ev.get('time', 0.0)}.jpg"
+                        if cv2.imwrite(str(Path(output_dir) / name), frame):
+                            ev["keyframe"] = name
+                    remaining.pop(frame_idx)
+                frame_idx += 1
+            missed = set(remaining)
+            if missed:
+                logger.warning("annotate keyframes: %s events missed frames: %s",
+                               len(missed), sorted(missed))
+        except Exception:  # noqa: BLE001 — 标注失败不影响主流程
+            logger.exception("annotate keyframes failed: %s", video_path)
+        finally:
+            cap.release()
+
+    def perceive(self, video_path: str, annotate_dir: str | None = None) -> dict:
+        """返回 scene 字典（dict 形式，符合 SCENE-SCHEMA）。
+
+        annotate_dir 给出时，为碰撞事件生成标注了事故车辆识别框的关键帧。
+        """
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         cap.release()
         tracks, track_types = self._run_track(video_path, fps)
         lights = self._light_states(video_path, tracks)
+        events = self.detect_events(tracks)
+        if annotate_dir:
+            self.annotate_keyframes(video_path, events, Path(video_path).stem, annotate_dir)
 
         vehicles = []
         for tid, td in tracks.items():
@@ -357,7 +447,7 @@ class VideoTracker:
             "scene_id": Path(video_path).stem,
             "source": "video",
             "vehicles": vehicles,
-            "events": self.detect_events(tracks),
+            "events": events,
             "traffic_lights": lights,
             "road": "unknown", "lane_markings": "unknown",
             "traffic_light": aggregate_light_state(lights), "visibility": "unknown",
