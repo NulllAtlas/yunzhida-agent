@@ -26,6 +26,7 @@
         <slot name="actions" />
 
         <template v-if="user">
+          <a class="t-link nav-wb" @click.prevent="goWorkbench">进入工作台</a>
           <span class="nav-user">
             <span class="avatar">{{ user.username.slice(0, 1).toUpperCase() }}</span>
             <span class="nav-uname">{{ user.username }}</span>
@@ -41,7 +42,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { clearSession, getUser, type SessionUser } from '../api/auth'
+import { clearSession, getToken, getUser, workbenchUrl, type SessionUser } from '../api/auth'
 
 withDefaults(
   defineProps<{
@@ -53,6 +54,11 @@ withDefaults(
 
 const router = useRouter()
 const user = ref<SessionUser | null>(getUser())
+
+/** 进入 :8000 的研判工作台（带令牌免二次登录） */
+function goWorkbench() {
+  window.location.href = workbenchUrl(getToken(), user.value?.username ?? '')
+}
 
 function logout() {
   clearSession()
@@ -132,6 +138,7 @@ function logout() {
 }
 .nav-uname { font-size: var(--font-13); color: var(--ink-700); font-weight: 600; }
 .nav-out { font-size: var(--font-13); }
+.nav-wb { font-size: var(--font-13); font-weight: 600; color: var(--brand-700); }
 
 @media (max-width: 640px) {
   .brand-sub { display: none; }

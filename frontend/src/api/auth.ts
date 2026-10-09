@@ -73,6 +73,13 @@ export function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+/** 研判工作台（:8000 的云智达界面）的跳转地址，带令牌与账号 —— 界面端读到 URL
+ *  参数后写入自己的 localStorage 静默恢复登录态，免去二次登录。 */
+export function workbenchUrl(token: string, username: string): string {
+  return `http://localhost:8000/?token=${encodeURIComponent(token)}`
+    + `&user=${encodeURIComponent(username)}`
+}
+
 /** 登录并落地会话。后端不回显用户名，沿用入参。 */
 export async function login(username: string, password: string): Promise<SessionUser> {
   const data = await post<LoginData>('/api/auth/login', { username, password })

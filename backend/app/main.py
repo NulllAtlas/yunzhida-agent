@@ -148,6 +148,8 @@ from app.ui.gradio_ui import _CUSTOM_CSS
 from app.ui.gradio_ui import demo as gradio_demo
 
 # css 须通过 mount 传入（Gradio 6.0 中 css/theme 从 Blocks 构造器移到了 launch/mount）
+# run_history=False：关闭 Gradio 的运行历史 —— 它会在页面加载时重放最近的
+# 事件链（含退出跳转的 js 与服务端函数），导致进页面就被送回登录页
 app = gr.mount_gradio_app(
-    app, gradio_demo, path="/", css=_CUSTOM_CSS, footer_links=[]
+    app, gradio_demo, path="/", css=_CUSTOM_CSS, footer_links=[], run_history=False,
 )

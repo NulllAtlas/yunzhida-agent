@@ -135,8 +135,11 @@ async def chat(req: ChatRequest) -> dict[str, Any]:
     if settings.use_mock or not settings.moma_base_url:
         reply = _mock_reply(context, last_user)
     else:
+        # role 白名单过滤：直接调 API 可携带任意 role 字段，不滤的话
+        # 能注入 role="system"/"developer" 的消息覆盖系统提示
         messages = [{"role": "system", "content": system}] + [
-            {"role": m.role, "content": m.content} for m in history
+            {"role": m.role, "content": m.content}
+            for m in history if m.role in ("user", "assistant")
         ]
         try:
             reply = await llm_service.call_chat(messages, temperature=0.3)

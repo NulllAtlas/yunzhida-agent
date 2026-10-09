@@ -12,6 +12,7 @@ Gradio 界面（豆包风格交互）—— 后端 8000 直接托管的主界面
 from __future__ import annotations
 
 import os
+import json
 import time
 
 import gradio as gr
@@ -338,51 +339,58 @@ def _render_result(res: dict, task_id: str, progress) -> str:
     return "\n".join(md)
 
 
-# ---------- 登录（统一入口：账号不区分角色，任何账号登录后都能查看案件） ----------
-def police_login(username: str, password: str):
-    if not (username or "").strip() or not (password or "").strip():
-        return None, gr.update(), "请输入账号与密码", ""
-    try:
-        r = requests.post(
-            f"{API}/api/auth/login",
-            json={"username": username.strip(), "password": password},
-            timeout=10,
-        )
-        data = r.json()
-    except Exception as e:  # noqa: BLE001
-        return None, gr.update(), f"❌ 服务不可用：{e}", ""
-    if r.status_code == 200 and data.get("code") == 0:
-        return (
-            data["data"]["access_token"],
-            gr.update(visible=True),
-            f"✅ 已登录：{username.strip()}",
-            username.strip(),
-        )
-    return None, gr.update(), f"❌ {data.get('msg') or '登录失败'}", ""
+# ---------- 对话记忆随账号保留 ----------
+def _render_history(records: list[dict]) -> list[dict]:
+    """落库的对话记录 → chatbot 气泡。
+
+    关键帧类消息落库时是 JSON（text + image 的 /outputs/ 路径），
+    这里还原成图片气泡；其余消息按纯文字还原。
+    """
+    out = []
+    for r in records:
+        content = r.get("content") or ""
+        try:
+            obj = json.loads(content)
+        except Exception:  # noqa: BLE001 — 非图片消息直接按文字还原
+            obj = None
+        if isinstance(obj, dict) and obj.get("image"):
+            local = os.path.abspath(os.path.join(
+                settings.output_dir, os.path.basename(obj["image"])))
+            out.append({"role": r.get("role", "assistant"), "content": [
+                {"path": local, "meta": {"_type": "image"}},
+                obj.get("text", ""),
+            ]})
+        else:
+            out.append({"role": r.get("role", "user"), "content": content})
+    return out
 
 
-# ---------- 注册（注册成功后自动登录） ----------
-def police_register(username: str, password: str, role_label: str):
-    u = (username or "").strip()
-    if not u or not (password or ""):
-        return None, gr.update(), "请输入账号与密码", ""
-    if not (3 <= len(u) <= 32):
-        return None, gr.update(), "❌ 账号需 3-32 个字符", ""
-    if len(password) < 6:
-        return None, gr.update(), "❌ 密码至少 6 位", ""
-    role = "police" if role_label == "交警" else "owner"
-    try:
-        r = requests.post(
-            f"{API}/api/auth/register",
-            json={"username": u, "password": password, "role": role},
-            timeout=10,
+def _add_msg(msgs: list[dict], username: str, bubble: dict) -> None:
+    """把一条气泡追加进对话并随账号落库（对话记忆跟账号走）。
+
+    图片气泡落库为 JSON（文字 + /outputs/ 路径），恢复时还原成图片气泡；
+    视频用户消息的文件本身不存（uploads 已有落盘），只存描述文字。
+    """
+    msgs.append(bubble)
+    if not username:
+        return
+    content = bubble.get("content")
+    if isinstance(content, list):
+        text = " ".join(c for c in content if isinstance(c, str)).strip()
+        image = next(
+            (c["path"] for c in content if isinstance(c, dict) and "path" in c),
+            None,
         )
-        data = r.json()
-    except Exception as e:  # noqa: BLE001
-        return None, gr.update(), f"❌ 服务不可用：{e}", ""
-    if r.status_code not in (200, 201) or data.get("code") != 0:
-        return None, gr.update(), f"❌ {data.get('msg') or '注册失败'}", ""
-    return police_login(u, password)
+        if image:
+            save_chat_message(
+                username, bubble.get("role", "assistant"),
+                json.dumps({"text": text, "image": "/outputs/" + os.path.basename(image)},
+                           ensure_ascii=False),
+            )
+        else:
+            save_chat_message(username, bubble.get("role", "assistant"), text)
+    else:
+        save_chat_message(username, bubble.get("role", "assistant"), content)
 
 
 # ---------- 同设备记住登录（localStorage 静默恢复） ----------
@@ -390,12 +398,13 @@ def restore_login(token: str | None, username: str):
     """页面加载：校验 localStorage 恢复的令牌后静默恢复登录态。
 
     同一设备一周内（令牌有效期）除非自主退出，否则不需要重新登录：
-    令牌有效 → 恢复登录态并收起登录面板；无记忆/令牌过期/校验失败 →
-    保持弹出的登录面板（现进页面先弹登录的行为不变）。
+    令牌有效 → 恢复登录态、灌回该账号的对话记忆并收起面板；
+    无记忆/令牌过期/校验失败 → 保持弹出的面板（显示从登录页进入的引导）。
+    登录/注册本身从 :8080 登录门面进行，这里只做恢复。
     """
     if not (token or "").strip():
-        return (None, "", gr.update(), "未登录", "**账号**：未登录",
-                gr.update(visible=True), True)
+        return (None, "", gr.update(), "**账号**：未登录",
+                gr.update(), gr.update(), gr.update(visible=True), True)
     try:
         r = requests.get(
             f"{API}/api/auth/me",
@@ -403,14 +412,16 @@ def restore_login(token: str | None, username: str):
         )
         data = r.json()
     except Exception as e:  # noqa: BLE001
-        return (None, "", gr.update(), f"❌ 服务不可用：{e}", "**账号**：未登录",
-                gr.update(visible=True), True)
+        return (None, "", gr.update(), f"**账号**：未登录（服务不可用：{e}）",
+                gr.update(), gr.update(), gr.update(visible=True), True)
     if r.status_code == 200 and data.get("code") == 0:
         u = data["data"]["username"]
-        return (token, u, gr.update(visible=True), f"✅ 已登录：{u}",
-                f"**账号**：{u}", gr.update(visible=False), False)
-    return (None, "", gr.update(), "未登录", "**账号**：未登录",
-            gr.update(visible=True), True)
+        hist = _render_history(load_chat_history(u))
+        return (token, u, gr.update(visible=True),
+                f"**账号**：{u}", hist, hist,
+                gr.update(visible=False), False)
+    return (None, "", gr.update(), "**账号**：未登录",
+            gr.update(), gr.update(), gr.update(visible=True), True)
 
 
 def police_list_cases(token: str | None):
@@ -542,7 +553,7 @@ def build_demo() -> gr.Blocks:
             return (_status_text(), _current_md(), gr.update(label=_accordion_label()))
 
         def logout():
-            return (None, gr.update(visible=False), "未登录", "**账号**：未登录")
+            return (None, gr.update(visible=False), "**账号**：未登录")
 
         timer = gr.Timer(10)
 
@@ -590,16 +601,6 @@ def build_demo() -> gr.Blocks:
             panel_open = gr.State(False)
             with gr.Group(visible=False, elem_classes="settings-panel") as settings_panel:
                 account_md = gr.Markdown("**账号**：未登录")
-                # 登录只在这里：交警端不再单独放登录表单
-                login_user_in = gr.Textbox(label="账号", placeholder="请输入账号", scale=1)
-                login_pass_in = gr.Textbox(label="密码", type="password", scale=1)
-                login_btn = gr.Button("登录", variant="primary", size="sm")
-                login_status = gr.Markdown("未登录")
-                with gr.Accordion("注册新账号", open=False):
-                    reg_user_in = gr.Textbox(label="账号", placeholder="3-32 个字符", scale=1)
-                    reg_pass_in = gr.Textbox(label="密码", placeholder="至少 6 位", type="password", scale=1)
-                    reg_role_in = gr.Radio(choices=["车主", "交警"], value="车主", label="角色", scale=1)
-                    reg_btn = gr.Button("注册并登录", variant="primary", size="sm")
                 with gr.Row():
                     logout_btn = gr.Button("退出登录", size="sm")
                     theme_btn = gr.Button("🌗 深色 / 浅色切换", size="sm")
@@ -622,17 +623,22 @@ def build_demo() -> gr.Blocks:
         # LLM，下一句 join 时快照到的 State 已含上一句，前后句才能被整合。
         chat_state = gr.State([])
         # 同设备记住登录：localStorage 存 token/账号，页面加载回填到隐藏框，
-        # 触发 restore_login 校验后静默恢复登录态（一周内免重复登录）
+        # 触发 restore_login 校验后静默恢复登录态（一周内免重复登录）。
+        # URL 带 token/user 参数（登录页 :8080 登录成功跳转过来）时优先采用：
+        # 跨域 localStorage 不共享，靠参数把登录态带过来，免去二次登录
         restored_token = gr.Textbox(visible=False)
         restored_user = gr.Textbox(visible=False)
-        # 登录成功后 State 的值经这两个隐藏框中转给 js 写 localStorage：
-        # gr.State 作为 js 事件的 inputs 传不到 JS（实测拿到 undefined）
-        remember_token = gr.Textbox(visible=False)
-        remember_user = gr.Textbox(visible=False)
+        # 退出跳转的时间戳：Gradio 6 的历史存储控件会在页面加载时重放
+        # 最近的事件链（含退出跳转的 js），导致进页面就被送回登录页。
+        # js 只认 5 秒内的时间戳 —— 重放的旧时间戳不生效，真点击才跳
+        logout_flag = gr.Textbox(visible=False)
         demo.load(
             fn=None, inputs=None, outputs=[restored_token, restored_user],
-            js="() => [localStorage.getItem('rm_token') || '', "
-               "localStorage.getItem('rm_user') || '']",
+            js="() => { const p = new URLSearchParams(location.search); "
+               "const t = p.get('token') || localStorage.getItem('rm_token') || ''; "
+               "const u = p.get('user') || localStorage.getItem('rm_user') || ''; "
+               "if (t) { localStorage.setItem('rm_token', t); "
+               "localStorage.setItem('rm_user', u); } return [t, u]; }",
         )
 
         with gr.Tabs():
@@ -776,11 +782,13 @@ def build_demo() -> gr.Blocks:
                         lines.append(j["note"])
                     return {"role": "assistant", "content": "\n".join(lines)}
 
-                def _poll_analysis(msgs, task_id: str):
+                def _poll_analysis(msgs, task_id: str, username: str):
                     """轮询任务：感知完成后关键帧片段先进对话，done 后补判定结论。
 
                     msgs 是全量会话消息（含本次 user 气泡与"已收到视频"），
                     每次追加后同步回写 State，下一轮对话才能接上研判上下文。
+                    消息一律经 _add_msg 追加 —— 登录用户的消息随账号落库，
+                    换设备登录同一账号还能看到之前的对话。
                     keyframes 在感知节点跑完时就挂上了任务状态（不必等 done），
                     所以判定还在跑的时候，标注了事故车辆识别框的关键帧就已经
                     出现在对话框里。
@@ -803,39 +811,40 @@ def build_demo() -> gr.Blocks:
                             # 单次超时不算失败，连续 3 次拿不到才放弃
                             failures += 1
                             if failures >= 3:
-                                msgs.append({"role": "assistant",
-                                             "content": f"❌ 服务不可用：{e}"})
+                                _add_msg(msgs, username, {"role": "assistant",
+                                       "content": f"❌ 服务不可用：{e}"})
                                 yield [*msgs], None, [*msgs]
                                 return
                             time.sleep(2)
                             continue
                         if r.status_code != 200:
-                            msgs.append({"role": "assistant",
-                                         "content": "❌ 任务状态查询失败"})
+                            _add_msg(msgs, username, {"role": "assistant",
+                                       "content": "❌ 任务状态查询失败"})
                             yield [*msgs], None, [*msgs]
                             return
                         info = r.json()
                         for kf in info.get("keyframes") or []:
                             if kf not in seen:
                                 seen.add(kf)
-                                msgs.append(_kf_bubble(
+                                _add_msg(msgs, username, _kf_bubble(
                                     kf, "📷 视频感知关键帧 · 事故车辆识别框"))
                                 yield [*msgs], None, [*msgs]
                         status = info.get("status")
                         if status == "done":
                             result = info.get("result") or {}
-                            msgs.append(_result_message(result))
+                            _add_msg(msgs, username, _result_message(result))
                             yield [*msgs], None, [*msgs]
                             # 判定里无法确认的部分：主动向用户提问，
                             # 用户在对话框直接回复，助手结合研判上下文继续分析
                             questions = _confirm_questions(result.get("judgment") or {})
                             if questions:
-                                msgs.append({"role": "assistant", "content": questions})
+                                _add_msg(msgs, username,
+                                         {"role": "assistant", "content": questions})
                                 yield [*msgs], None, [*msgs]
                             return
                         if status == "failed":
-                            msgs.append({"role": "assistant", "content":
-                                         f"❌ 分析失败：{info.get('error') or '未知原因'}"})
+                            _add_msg(msgs, username, {"role": "assistant", "content":
+                                      f"❌ 分析失败：{info.get('error') or '未知原因'}"})
                             yield [*msgs], None, [*msgs]
                             return
                         time.sleep(1.5)
@@ -852,33 +861,29 @@ def build_demo() -> gr.Blocks:
                              if isinstance(message, dict) else str(message).strip())
                     video = _video_file_of(message)
                     if not video:
-                        msgs.append(_user_bubble(message))
-                        # "正在思考"占位只在对话区显示（不进 State）：
+                        _add_msg(msgs, username, _user_bubble(message))
+                        # "正在思考"占位只在对话区显示（不进 State、不落库）：
                         # LLM 返回后整列表替换成真回复，占位自然消失
                         yield [*msgs,
                                {"role": "assistant", "content": "🤔 正在思考…"}], gr.update(value=None), [*msgs]
                         reply = chat_fn(message, _history_text(msgs))
-                        if username:
-                            if asked:
-                                save_chat_message(username, "user", asked)
-                            save_chat_message(username, "assistant", reply)
-                        msgs.append({"role": "assistant", "content": reply})
+                        _add_msg(msgs, username, {"role": "assistant", "content": reply})
                         yield [*msgs], gr.update(value=None), [*msgs]
                         return
                     # 视频研判分支：先落 user 气泡与"开始分析"，感知完成后
-                    # 关键帧片段进对话，done 后再补判定结论（研判结果不入问询库）
-                    msgs.append(_user_bubble(message))
-                    msgs.append({"role": "assistant", "content":
-                                 "📹 已收到视频，开始视频感知（YOLO 检测 + 轨迹追踪），"
-                                 "关键帧片段稍后反馈…"})
+                    # 关键帧片段进对话，done 后再补判定结论（消息随账号落库）
+                    _add_msg(msgs, username, _user_bubble(message))
+                    _add_msg(msgs, username, {"role": "assistant", "content":
+                             "📹 已收到视频，开始视频感知（YOLO 检测 + 轨迹追踪），"
+                             "关键帧片段稍后反馈…"})
                     yield [*msgs], gr.update(value=None), [*msgs]
                     task_id = _submit_video_analysis(video, asked)
                     if not task_id:
-                        msgs.append({"role": "assistant",
-                                     "content": "❌ 视频提交失败，请稍后重试"})
+                        _add_msg(msgs, username, {"role": "assistant",
+                                 "content": "❌ 视频提交失败，请稍后重试"})
                         yield [*msgs], gr.update(value=None), [*msgs]
                         return
-                    yield from _poll_analysis(msgs, task_id)
+                    yield from _poll_analysis(msgs, task_id, username)
 
                 msg_box.submit(respond,
                                [msg_box, chatbot, police_username, chat_state],
@@ -892,7 +897,9 @@ def build_demo() -> gr.Blocks:
             with gr.Tab("👮 交警端"):
                 gr.Markdown("### 👮 交警端 · 案件研判管理")
                 # 登录统一在右上角 ⚙️ 设置 里，这里只留提示与案件管理
-                police_hint_md = gr.Markdown("未登录 —— 请在右上角 ⚙️ 设置 中登录账号")
+                police_hint_md = gr.Markdown(
+                    "未登录 —— 对话记忆不保留，请从 "
+                    "[登录页](http://localhost:8080/#/login) 登录进入")
                 with gr.Group(visible=False) as case_group:
                     gr.Markdown("#### 案件列表")
                     list_btn = gr.Button("🔄 刷新案件列表")
@@ -925,101 +932,52 @@ def build_demo() -> gr.Blocks:
                         police_draft, inputs=[police_token, case_id_in],
                         outputs=[draft_file, draft_status],
                     )
-        # ---------- 登录 / 退出绑定（case_group / police_token 定义后） ----------
-        login_btn.click(
-            police_login,
-            inputs=[login_user_in, login_pass_in],
-            outputs=[police_token, case_group, login_status, police_username],
+        # ---------- 退出 / 恢复绑定（case_group / police_token 定义后） ----------
+        # 登录/注册从 :8080 登录门面进行：URL 带令牌跳转进来，
+        # restore_login 校验后恢复登录态并灌回该账号的对话记忆
+        def _load_history_pair(u):
+            hist = _render_history(load_chat_history(u))
+            return hist, hist
+        # 退出登录清空对话区：对话记忆跟账号走，退出后不残留上个账号的消息
+        logout_btn.click(
+            lambda: (gr.update(value=[]), []),
+            None, [chatbot, chat_state],
         )
-        login_btn.click(
-            lambda tk, u: (tk or "", u or ""),
-            inputs=[police_token, police_username],
-            outputs=[remember_token, remember_user],
-        ).then(
-            # 登录成功把令牌/账号写进 localStorage：同设备一周内免重复登录
-            fn=None, inputs=[remember_token, remember_user], outputs=None,
-            js="(t, u) => { if (t) { localStorage.setItem('rm_token', t); "
-               "localStorage.setItem('rm_user', u || ''); } }",
-        )
-        login_btn.click(
-            lambda tk, u: (
-                f"**账号**：{u}" if tk else "**账号**：未登录",
-                "" if tk else "未登录 —— 请在右上角 ⚙️ 设置 中登录账号",
-            ),
-            inputs=[police_token, police_username],
-            outputs=[account_md, police_hint_md],
-        )
-        # 登录成功收起面板（进页面先弹的登录框，登录完就该收起）；
-        # 失败保持打开让用户重试。panel_open 同步更新，否则下次点 ⚙️ 会错拍
-        login_btn.click(
-            lambda tk: (gr.update(visible=not bool(tk)), not bool(tk)),
-            inputs=[police_token],
-            outputs=[settings_panel, panel_open],
-        )
-        # 登录成功把该账号的问询记录灌回对话区（记录跟账号走，
-        # 同时写进 chat_state：下一轮对话的上下文从这里读）
-        login_btn.click(
-            lambda u: (load_chat_history(u), load_chat_history(u)),
-            inputs=[police_username],
-            outputs=[chatbot, chat_state],
-        )
-        # ---------- 注册绑定（行为与登录一致：成功后展开案件区、收起面板、灌回记录） ----------
-        reg_btn.click(
-            police_register,
-            inputs=[reg_user_in, reg_pass_in, reg_role_in],
-            outputs=[police_token, case_group, login_status, police_username],
-        )
-        reg_btn.click(
-            lambda tk, u: (tk or "", u or ""),
-            inputs=[police_token, police_username],
-            outputs=[remember_token, remember_user],
-        ).then(
-            # 注册并登录成功同样记住登录（localStorage）
-            fn=None, inputs=[remember_token, remember_user], outputs=None,
-            js="(t, u) => { if (t) { localStorage.setItem('rm_token', t); "
-               "localStorage.setItem('rm_user', u || ''); } }",
-        )
-        reg_btn.click(
-            lambda tk, u: (
-                f"**账号**：{u}" if tk else "**账号**：未登录",
-                "" if tk else "未登录 —— 请在右上角 ⚙️ 设置 中登录账号",
-            ),
-            inputs=[police_token, police_username],
-            outputs=[account_md, police_hint_md],
-        )
-        reg_btn.click(
-            lambda tk: (gr.update(visible=not bool(tk)), not bool(tk)),
-            inputs=[police_token],
-            outputs=[settings_panel, panel_open],
-        )
-        reg_btn.click(
-            lambda u: (load_chat_history(u), load_chat_history(u)),
-            inputs=[police_username],
-            outputs=[chatbot, chat_state],
+        logout_btn.click(
+            lambda: str(int(time.time() * 1000)),
+            None, [logout_flag],
         )
         logout_btn.click(
             logout, None,
-            [police_token, case_group, login_status, account_md],
+            [police_token, case_group, account_md],
         )
         logout_btn.click(
-            lambda: "未登录 —— 请在右上角 ⚙️ 设置 中登录账号",
+            lambda: "未登录 —— 对话记忆不保留，请从 "
+                    "[登录页](http://localhost:8080/#/login) 登录进入",
             None, [police_hint_md],
         ).then(
-            # 自主退出清除记忆：下次进页面重新弹出登录面板
-            fn=None, inputs=None, outputs=None,
-            js="() => { localStorage.removeItem('rm_token'); "
-               "localStorage.removeItem('rm_user'); }",
+            # 自主退出：清除记忆并跳回 :8080 登录门面（登录流程从门面走）。
+            # 带 logout=1 标记让门面端也清掉自己的会话 —— 跨域 localStorage
+            # 不共享，不带上标记的话门面端的旧会话会把用户又拉回 :8000。
+            # logout_flag 是真实点击的时间戳：历史存储控件重放事件链时
+            # 带的是旧时间戳，超过 5 秒不跳，避免进页面就被送回登录页
+            fn=None, inputs=[logout_flag], outputs=None,
+            js="(f) => { if (!f || Date.now() - parseInt(f, 10) > 5000) return; "
+               "localStorage.removeItem('rm_token'); "
+               "localStorage.removeItem('rm_user'); "
+               "window.location.href = 'http://localhost:8080/#/login?logout=1'; }",
         )
         # 静默恢复：页面加载时 js 把 localStorage 的令牌回填到隐藏框，
-        # 触发 restore_login 校验 —— 有效则恢复登录态并收起面板，
-        # 无记忆/过期则保持弹出的登录面板（change 在值有变化时才触发）
+        # 触发 restore_login 校验 —— 有效则恢复登录态、灌回该账号的对话记忆
+        # 并收起面板；无记忆/过期则保持弹出的面板（显示引导登录的提示）
         restored_token.change(
             restore_login,
             [restored_token, restored_user],
-            [police_token, police_username, case_group, login_status,
-             account_md, settings_panel, panel_open],
+            [police_token, police_username, case_group, account_md,
+             chatbot, chat_state, settings_panel, panel_open],
         )
-        # 进页面先弹登录：页面加载完成自动展开设置面板（登录框）
+        # 进页面自动展开设置面板：未登录用户看到"从登录页进入"的引导；
+        # 已登录用户由 restore_login 校验后自动收起
         demo.load(
             lambda: (gr.update(visible=True), True),
             None, [settings_panel, panel_open],

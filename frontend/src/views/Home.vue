@@ -5,11 +5,8 @@
     <!-- 主视觉 -->
     <section class="hero">
       <div class="hero-inner">
-        <span class="pill">🚗 移动云杯 · 模型应用赛作品</span>
-        <h1 class="slogan">
-          交通事故辅助研判
-          <span class="grad">智能体</span>
-        </h1>
+        <h1 class="slogan">云智达</h1>
+        <p class="hero-sub">交通事故辅助研判智能体</p>
         <p class="subtitle">
           视频感知 → 法条检索 → 责任判定 → 应急处置，多智能体流水线一体化完成
         </p>
@@ -19,39 +16,8 @@
       </div>
     </section>
 
-    <!-- 角色入口 -->
+    <!-- 系统状态 -->
     <section class="t-page">
-      <div class="entries">
-        <div class="entry t-card" @click="go('/owner')">
-          <div class="entry-icon ic-owner">👤</div>
-          <div class="entry-title">车主端</div>
-          <p class="entry-desc">
-            上传行车记录仪视频 / 现场照片，即时获取应急处置步骤与责任预判概览，
-            并查看交警下发的消息与处理意见。
-          </p>
-          <div class="entry-foot">
-            <span class="entry-points">研判 · 应急 · 答疑 · 案件进度</span>
-            <span class="entry-go">进入 →</span>
-          </div>
-        </div>
-
-        <div class="entry t-card" @click="go('/police')">
-          <div class="entry-icon ic-police">👮</div>
-          <div class="entry-title">
-            交警端
-            <span class="tag">警务</span>
-          </div>
-          <p class="entry-desc">
-            查看案件列表与责任认定详情，受理案件、下发消息与处理意见，
-            导出《道路交通事故认定书》草稿。
-          </p>
-          <div class="entry-foot">
-            <span class="entry-points">审核 · 下发 · 状态流转 · 导出</span>
-            <span class="entry-go">进入 →</span>
-          </div>
-        </div>
-      </div>
-
       <!-- 系统状态 -->
       <section class="status t-card">
         <div class="status-head">
@@ -133,7 +99,6 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import AppNavbar from '../components/AppNavbar.vue'
 
 interface HealthInfo {
@@ -145,14 +110,8 @@ interface LLMConfig {
   use_mock: boolean; timeout_s: number; editable: boolean
 }
 
-const router = useRouter()
 const health = ref<HealthInfo | null>(null)
 const error = ref('')
-
-/** 未登录则先去全屏登录页，登录成功后带着目标跳回 */
-function go(path: string) {
-  router.push({ path: '/login', query: { redirect: path } })
-}
 
 const showCfg = ref(false)
 const cfg = ref<LLMConfig | null>(null)
@@ -226,7 +185,11 @@ async function callCfgApi(path: string): Promise<void> {
 const testConfig = () => callCfgApi('/api/config/llm/test')
 const applyConfig = () => callCfgApi('/api/config/llm')
 
-onMounted(loadHealth)
+onMounted(() => {
+  // 打开 8080 一律停留首页（不自动跳走）；已登录用户通过导航栏的
+  // "工作台"入口进入 :8000 研判界面
+  loadHealth()
+})
 </script>
 
 <style scoped>
@@ -249,76 +212,24 @@ onMounted(loadHealth)
 }
 .hero-inner { position: relative; z-index: 1; max-width: 720px; margin: 0 auto; }
 
-.pill {
-  display: inline-block;
-  padding: 5px 14px;
-  border-radius: var(--radius-full);
-  font-size: var(--font-12);
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.24);
+.slogan {
+  font-size: 56px;
+  font-weight: 900;
+  letter-spacing: 8px;
+  margin: 0 0 10px;
+  line-height: 1.15;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.2);
 }
-.slogan { font-size: 40px; font-weight: 800; margin: 18px 0 14px; line-height: 1.25; }
-.grad {
-  background: linear-gradient(90deg, #93c5fd, #c4b5fd);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+.hero-sub {
+  font-size: var(--font-18);
+  font-weight: 600;
+  letter-spacing: 2px;
+  opacity: 0.94;
+  margin-bottom: 14px;
 }
 .subtitle { font-size: var(--font-17); opacity: 0.95; margin-bottom: 10px; }
 .desc { font-size: var(--font-14); opacity: 0.82; }
 .desc b { color: #fff; }
-
-.entries {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-5);
-  margin-bottom: var(--space-6);
-}
-.entry {
-  cursor: pointer;
-  padding: var(--space-6);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  transition: transform 0.18s ease, box-shadow 0.2s ease, border-color 0.2s;
-}
-.entry:hover {
-  transform: translateY(-4px);
-  box-shadow: var(--shadow-lg);
-  border-color: var(--brand-200);
-}
-.entry-icon {
-  width: 52px;
-  height: 52px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 26px;
-  border-radius: 14px;
-}
-.ic-owner { background: var(--brand-100); }
-.ic-police { background: var(--warning-bg); }
-.entry-title { font-size: var(--font-20); font-weight: 800; color: var(--ink-900); }
-.tag {
-  font-size: var(--font-12);
-  font-weight: 600;
-  color: var(--warning);
-  background: var(--warning-bg);
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  margin-left: 6px;
-  vertical-align: 2px;
-}
-.entry-desc { font-size: var(--font-13); color: var(--ink-500); line-height: 1.8; flex: 1; }
-.entry-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-top: 12px;
-  border-top: 1px dashed var(--border);
-}
-.entry-points { font-size: var(--font-12); color: var(--ink-400); }
-.entry-go { font-size: var(--font-14); font-weight: 700; color: var(--brand-600); }
 
 /* 系统状态 */
 .status { padding: var(--space-5); }
@@ -369,8 +280,7 @@ onMounted(loadHealth)
 .note b { color: var(--ink-500); }
 
 @media (max-width: 768px) {
-  .slogan { font-size: 30px; }
-  .entries { grid-template-columns: 1fr; }
+  .slogan { font-size: 38px; letter-spacing: 4px; }
   .status-grid { grid-template-columns: 1fr 1fr; }
 }
 </style>

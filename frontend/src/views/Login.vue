@@ -19,11 +19,10 @@
           </span>
         </div>
 
-        <h1 class="slogan">
-          视频感知 · 多智能体研判<br />让每一次事故都能被快速厘清
-        </h1>
+        <h1 class="slogan">云智达</h1>
+        <p class="slogan-sub">交通事故辅助研判智能体</p>
         <p class="subline">
-          上传行车记录仪视频或现场照片，由
+          视频感知 · 多智能体研判 —— 让每一次事故都能被快速厘清。上传行车记录仪视频或现场照片，由
           <b>视频感知 → 法条检索 → 责任判定 → 应急处置</b>
           多智能体流水线，为你生成辅助研判建议。
         </p>
@@ -102,9 +101,9 @@
         </form>
 
         <p class="tip">
-          账号只用于识别身份；登录后可在<b>入口页</b>选择进入车主端或交警端工作台。
+          账号只用于识别身份；登录成功后直接进入研判工作台。
         </p>
-        <router-link to="/" class="back">← 返回入口页</router-link>
+        <router-link to="/" class="back">← 返回首页</router-link>
       </div>
     </main>
   </div>
@@ -112,8 +111,8 @@
 
 <script setup lang="ts">
 import { nextTick, onMounted, reactive, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { getUser, login, register, type SessionUser } from '../api/auth'
+import { useRoute } from 'vue-router'
+import { clearSession, getUser, getToken, login, register, workbenchUrl, type SessionUser } from '../api/auth'
 
 type Mode = 'login' | 'register'
 
@@ -123,8 +122,6 @@ const TABS: { value: Mode; label: string }[] = [
 ]
 
 const route = useRoute()
-const router = useRouter()
-
 const mode = ref<Mode>('login')
 const busy = ref(false)
 const message = ref('')
@@ -134,23 +131,17 @@ const form = reactive({ username: '', password: '', confirm: '' })
 const firstInput = ref<HTMLInputElement>()
 
 onMounted(() => {
-  // 已登录则直接按目标跳转（守卫拦到页面时可能带着 redirect）
+  // 从研判界面（:8000）自主退出跳回时带 logout=1：先清掉本端会话，
+  // 否则下面的"已登录跳转"会把用户又拉回 :8000，退出等于没退
+  if (route.query.logout) clearSession()
+  // 已登录则直接进 :8000 的研判界面（8080 只作登录门面）
   const existing = getUser()
   if (existing) {
-    router.replace(resolveTarget())
+    window.location.href = workbenchUrl(getToken(), existing.username)
     return
   }
   nextTick(() => firstInput.value?.focus())
 })
-
-/** 只接受站内绝对路径，避免开放重定向 */
-function resolveTarget(): string {
-  const redirect = route.query.redirect
-  if (typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')) {
-    return redirect
-  }
-  return '/'
-}
 
 function switchMode(m: Mode): void {
   mode.value = m
@@ -182,8 +173,10 @@ async function submit(): Promise<void> {
                              : await register(form.username, form.password)
     ok.value = true
     message.value = `${user.username}，欢迎回来`
-    // 稍等让提示可见，再跳转
-    setTimeout(() => router.replace(resolveTarget()), 350)
+    // 稍等让提示可见，再直接进入 :8000 的研判界面（带令牌免二次登录）
+    setTimeout(() => {
+      window.location.href = workbenchUrl(getToken(), user.username)
+    }, 350)
   } catch (e) {
     message.value = e instanceof Error ? e.message : '请求失败，请重试'
   } finally {
@@ -255,7 +248,21 @@ async function submit(): Promise<void> {
 .logo-text .name { font-size: var(--font-24); font-weight: 800; letter-spacing: 1px; }
 .logo-text .sub { font-size: var(--font-12); opacity: 0.85; }
 
-.slogan { font-size: 30px; font-weight: 800; line-height: 1.4; margin-bottom: 16px; }
+.slogan {
+  font-size: 52px;
+  font-weight: 900;
+  letter-spacing: 6px;
+  line-height: 1.2;
+  margin-bottom: 8px;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.18);
+}
+.slogan-sub {
+  font-size: var(--font-18);
+  font-weight: 600;
+  letter-spacing: 2px;
+  opacity: 0.92;
+  margin-bottom: 20px;
+}
 .subline { font-size: var(--font-15); line-height: 1.8; opacity: 0.92; margin-bottom: 28px; }
 .subline b { color: #fff; font-weight: 700; }
 
