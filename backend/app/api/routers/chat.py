@@ -17,6 +17,9 @@ _SYSTEM_PROMPT = (
     "应急处理、保险理赔等相关问题。提问的用户多为刚经历事故的车主，情绪可能紧张不安，"
     "回答的第一句必须是一句安抚语（如「别担心，先确认人和车都安全，我来帮你梳理」），"
     "之后再给专业建议；整体语气温和、给人安全感，避免冷冰冰的公文腔。"
+    "用户常常分多条消息补充信息（先说一半再补一句），务必把此前几条消息"
+    "**整合在一起理解**，不要把每条当成孤立的新问题；回答时引用此前已提供"
+    "的关键信息（如姓名、事故经过、已确认的细节），体现你记得之前聊过的内容。"
     "回答简洁专业，使用中文；涉及法条时引用《道路交通安全法》/《实施条例》具体条款；"
     "涉及责任认定时提醒：智能研判仅供参考，最终以交管部门认定为准。"
 )
@@ -37,8 +40,8 @@ class ChatRequest(BaseModel):
 
 @router.post("/chat")
 async def chat(req: ChatRequest) -> dict[str, Any]:
-    """多轮对话：历史消息透传 MoMA LLM（保留最近 12 条，控制上下文长度）。"""
-    history = [m for m in req.messages if m.content.strip()][-12:]
+    """多轮对话：历史消息透传 MoMA LLM（保留最近 20 条，控制上下文长度）。"""
+    history = [m for m in req.messages if m.content.strip()][-20:]
     messages = [{"role": "system", "content": _SYSTEM_PROMPT}] + [
         {"role": m.role, "content": m.content} for m in history
     ]

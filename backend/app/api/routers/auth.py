@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.db import create_user, get_user
 from app.core.errors import ApiError
-from app.core.security import create_token, hash_password, verify_password
+from app.core.security import create_token, get_current_user, hash_password, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -51,3 +51,9 @@ async def login(payload: LoginIn) -> dict:
             "expires_in": settings.jwt_expire_min * 60,
         },
     }
+
+
+@router.get("/me")
+async def me(user: dict = Depends(get_current_user)) -> dict:
+    """校验令牌并返回当前账号（界面端"同设备记住登录"的静默恢复用）。"""
+    return {"code": 0, "msg": "ok", "data": user}

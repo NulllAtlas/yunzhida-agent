@@ -66,7 +66,9 @@ class Settings(BaseSettings):
     # 鉴权（D7）：JWT 与用户库
     jwt_secret: str = "roadmind-dev-secret-change-me"
     jwt_alg: str = "HS256"
-    jwt_expire_min: int = 720
+    # 7 天：配合界面端的"同设备记住登录"（localStorage + 静默恢复），
+    # 一周内除非自主退出，否则不需要重新登录
+    jwt_expire_min: int = 10080
     db_path: str = "./data/roadmind.db"
 
     # 运行时模型配置：允许在首页切换大模型（url / key / model）。
