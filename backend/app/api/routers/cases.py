@@ -237,6 +237,7 @@ def _history_item(record: dict) -> dict:
         "input_text": record.get("input_text") or "",
         "photos": record.get("photos") or [],
         "status": status,
+        "flow_status": record.get("flow_status") or "submitted",
         "accident_type": record.get("accident_type"),
         "error": error,
         "created_at": record.get("created_at"),

@@ -7,20 +7,19 @@ interface RouteAuthMeta {
 }
 
 /**
- * 未登录时回入口页并把登录弹窗叫起来。
- * 登录是 Home 上的一个弹窗，不是独立页面，所以这里用 query 传递意图而不是路由。
+ * 未登录时跳到全屏登录页，并把想去的地方带在 query 里，登录成功后再跳回去。
  */
 function requireLogin(to: string) {
-  return { path: '/', query: { login: '1', redirect: to } }
+  return { path: '/login', query: { redirect: to } }
 }
 
 export const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    // 入口选择页，也是登录后的落脚点；登录弹窗就挂在这一页上
+    // 入口选择页：已登录时展示两个端的入口与系统状态
     { path: '/', component: () => import('../views/Home.vue') },
-    // 旧的 /login 页面已并入首页弹窗，保留跳转兼容旧链接
-    { path: '/login', redirect: (to) => ({ path: '/', query: { login: '1', ...to.query } }) },
+    // 全屏登录 / 注册页（独立路由、整屏布局）
+    { path: '/login', component: () => import('../views/Login.vue') },
     // 两个端都只要求“已登录”。身份由入口页选择，不再由账号角色决定，
     // 所以这里不设 role 限制——车主账号也能进交警端看看。
     { path: '/owner', component: () => import('../views/Owner.vue'), meta: { requiresAuth: true } },

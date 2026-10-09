@@ -16,6 +16,7 @@ from app.api import (
     cases_router,
     chat_router,
     config_router,
+    interact_router,
     police_router,
     progress_router,
 )
@@ -50,6 +51,7 @@ app.include_router(auth_router)      # D7：注册 / 登录 / JWT
 app.include_router(cases_router)     # D1/D2：创建案件 / 状态 / 结果 / 指标
 app.include_router(police_router)    # D7：交警端案件列表 / 详情 / 草稿导出
 app.include_router(progress_router)  # D4/D5：WebSocket 进度推送
+app.include_router(interact_router)  # D12：双端联动（状态流转 / 交警下发 / 车主查看）
 app.include_router(config_router)    # 运行时切换大模型（界面右上角模型选择）
 app.include_router(chat_router)      # 对话接口（多轮对话透传 MoMA）
 

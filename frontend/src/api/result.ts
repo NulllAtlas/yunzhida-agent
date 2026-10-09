@@ -201,6 +201,7 @@ export function entryFromRecord(record: HistoryRecord): SubmissionEntry {
       photoCount: (record.photos || []).length,
       hasText: !!record.input_text,
     }),
+    flowStatus: record.flow_status || 'submitted',
   }
 
   if (record.status === 'failed') {

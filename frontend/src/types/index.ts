@@ -154,14 +154,6 @@ export interface SubmissionPayload {
   description: string
 }
 
-export interface CaseRecord {
-  id: string
-  img: string
-  result: AIResult
-  time: string
-  status: 'processing' | 'done'
-}
-
 /**
  * 一次「提交研判」的记录（车主端与交警端共用）。
  *
@@ -174,6 +166,7 @@ export interface SubmissionEntry {
   fileName: string                        // 提交标题：视频名 / 照片名 / 「文字提交」
   kinds: string                           // 输入组合，如「视频+2 张照片+文字」
   status: 'analyzing' | 'done' | 'failed'
+  flowStatus?: string                     // 双端联动的业务状态（submitted/.../closed）
   progress?: number                       // 分析进度 0-100（来自 TaskInfo.progress）
   stage?: string                          // 当前阶段的中文说明
   error?: string                          // 失败原因
@@ -187,9 +180,51 @@ export interface HistoryRecord {
   input_text: string                      // 用户补充的文字描述；没写时为空串
   photos: string[]                        // 随附现场照片的存储名（仅用于显示"交了几张"）
   status: string                          // pending/perceiving/.../done/failed（后端已把中断的修成 failed）
+  flow_status?: string                    // 业务状态流（submitted/.../closed），双端联动
   accident_type: string | null
   error: string | null
   created_at: string
   updated_at: string
   result: AnalyzeResult | null
+}
+
+// ---------------- D12 双端联动（案件状态流转 / 交警下发 / 车主查看） ----------------
+
+export type CaseFlowStatus =
+  | 'submitted'
+  | 'analyzing'
+  | 'pending_review'
+  | 'reviewing'
+  | 'decided'
+  | 'rejected'
+  | 'dispensed'
+  | 'closed'
+
+export const CASE_FLOW_LABEL: Record<string, string> = {
+  submitted: '已提交，待 AI 研判',
+  analyzing: 'AI 研判中',
+  pending_review: '已出具研判，待交警受理',
+  reviewing: '交警受理审核中',
+  decided: '审核通过，责任已认定',
+  rejected: '已驳回，待补充材料',
+  dispensed: '已下发处理意见',
+  closed: '已结案',
+}
+
+/** 案件时间线里的一环：状态流转 / 交警消息 / 下发处理意见。 */
+export interface TimelineEvent {
+  id: number
+  task_id: string
+  kind: 'status' | 'message' | 'disposition'
+  title: string
+  content: string
+  created_at: string
+}
+
+/** GET /api/cases/{task_id}/interact 的返回：车主端据此渲染进度与交警下发内容。 */
+export interface CaseInteraction {
+  task_id: string
+  flow_status: CaseFlowStatus
+  flow_label: string
+  timeline: TimelineEvent[]
 }

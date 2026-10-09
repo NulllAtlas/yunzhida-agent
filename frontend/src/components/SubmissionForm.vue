@@ -23,7 +23,7 @@
       </template>
     </div>
 
-    <!-- 文字描述：与视频/照片同时进判定，不再是有视频就被丢掉 -->
+    <!-- 文字描述 -->
     <label class="field">
       <span>补充说明（可选）</span>
       <textarea
@@ -35,7 +35,7 @@
       ></textarea>
     </label>
 
-    <!-- 现场照片（可选，最多数张） -->
+    <!-- 现场照片 -->
     <div class="field">
       <span>现场照片（可选，最多 {{ maxPhotos }} 张）</span>
       <input ref="photoInput" type="file" accept="image/*" multiple hidden @change="onPhotoSelect" />
@@ -48,12 +48,14 @@
           ＋ 添加照片
         </button>
       </div>
-      <p class="hint">照片会做单帧检测（车辆 / 行人 / 信号灯），作为补充证据进判定；静态画面无法判断速度方向</p>
+      <p class="hint">照片会做单帧检测（车辆 / 行人 / 信号灯），作为补充证据进判定</p>
     </div>
 
-    <p v-if="error" class="error">{{ error }}<a class="link" @click="submit">重试</a></p>
+    <p v-if="error" class="t-alert error">
+      {{ error }}<a class="link" @click="submit">重试</a>
+    </p>
 
-    <button class="btn-submit" :disabled="!canSubmit || analyzing" @click="submit">
+    <button class="t-btn lg block" :disabled="!canSubmit || analyzing" @click="submit">
       {{ analyzing ? '⏳ 多智能体研判中…' : '提交研判' }}
     </button>
     <p v-if="analyzing" class="hint center">感知 → 检索 → 判定 → 应急，进度见下方记录</p>
@@ -70,7 +72,6 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  /** 提交成功：把原始输入与后端 task_id 交给页面去建记录、起轮询 */
   submitted: [payload: SubmissionPayload, taskId: string]
 }>()
 
@@ -160,7 +161,6 @@ function removePhoto(index: number) {
   photos.value.splice(index, 1)
 }
 
-/** 提交成功后清空表单，免得同一份材料被连着交两次 */
 function reset() {
   clearVideo()
   photos.value.forEach((p) => URL.revokeObjectURL(p.preview))
@@ -181,14 +181,12 @@ async function submit() {
   const form = new FormData()
   form.append('description', payload.description)
   if (payload.video) form.append('video', payload.video)
-  // 同名 key 多次 append：后端用 list[UploadFile] 接
   payload.photos.forEach((file) => form.append('photos', file))
 
   try {
     const res = await fetch('/api/submissions', { method: 'POST', body: form })
     const body = await res.json().catch(() => null)
     if (!res.ok) throw new Error(body?.msg || `服务异常（${res.status}）`)
-    // /api/submissions 直接返回 TaskInfo（含 task_id）
     if (!body?.task_id) throw new Error('响应中缺少 task_id')
     emit('submitted', payload, body.task_id)
     reset()
@@ -199,71 +197,75 @@ async function submit() {
 </script>
 
 <style scoped>
-.submit-form { display: flex; flex-direction: column; gap: 16px; }
+.submit-form { display: flex; flex-direction: column; gap: 18px; }
 
 .video-zone {
-  border: 2px dashed #94a3b8;
-  border-radius: 12px;
-  padding: 32px 24px;
+  border: 2px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 30px 24px;
   text-align: center;
   cursor: pointer;
-  transition: border-color 0.2s;
-  background: #f8fafc;
-  min-height: 160px;
+  transition: border-color 0.2s, background 0.2s;
+  background: var(--surface-2);
+  min-height: 150px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
 }
-.video-zone:hover { border-color: #3b82f6; }
-.label { font-size: 17px; color: #1e293b; font-weight: 600; }
-.preview { max-width: 320px; max-height: 200px; margin-bottom: 8px; border-radius: 8px; }
+.video-zone:hover { border-color: var(--brand-500); background: var(--brand-50); }
+.label { font-size: var(--font-16); color: var(--ink-900); font-weight: 700; }
+.preview { max-width: 320px; max-height: 200px; margin-bottom: 8px; border-radius: var(--radius-sm); }
 
-.field { display: flex; flex-direction: column; gap: 6px; }
-.field > span { font-size: 13px; color: #475569; font-weight: 600; }
+.field { display: flex; flex-direction: column; gap: 7px; }
+.field > span { font-size: var(--font-13); color: var(--ink-700); font-weight: 700; }
 .desc {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  font-size: var(--font-14);
   line-height: 1.6;
   resize: vertical;
   font-family: inherit;
+  color: var(--ink-900);
+  transition: border-color 0.18s, box-shadow 0.18s;
 }
-.desc:focus { outline: none; border-color: #3b82f6; }
+.desc:focus { outline: none; border-color: var(--brand-500); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15); }
 
 .photos { display: flex; flex-wrap: wrap; gap: 10px; }
-.photo { position: relative; width: 92px; height: 68px; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0; }
+.photo {
+  position: relative;
+  width: 92px;
+  height: 68px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
 .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .remove {
-  position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; line-height: 1;
-  border: none; border-radius: 50%; background: rgba(15, 23, 42, 0.6); color: #fff;
+  position: absolute; top: 3px; right: 3px;
+  width: 20px; height: 20px; line-height: 1;
+  border: none; border-radius: 50%;
+  background: rgba(15, 23, 42, 0.55); color: #fff;
   cursor: pointer; font-size: 14px; padding: 0;
 }
 .add-photo {
-  width: 92px; height: 68px; border: 1px dashed #94a3b8; border-radius: 8px;
-  background: #f8fafc; color: #64748b; cursor: pointer; font-size: 13px;
-}
-.add-photo:hover { border-color: #3b82f6; color: #3b82f6; }
-
-.hint { font-size: 12px; color: #94a3b8; margin: 0; }
-.hint.center { text-align: center; }
-.error { color: #ef4444; font-size: 14px; margin: 0; text-align: center; }
-.link { color: #3b82f6; cursor: pointer; text-decoration: underline; margin-left: 6px; }
-
-.btn-submit {
-  padding: 12px 20px;
-  background: #3b82f6;
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  font-size: 15px;
-  font-weight: 600;
+  width: 92px; height: 68px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink-500);
   cursor: pointer;
-  transition: background 0.2s;
+  font-size: var(--font-13);
+  transition: all 0.15s;
 }
-.btn-submit:hover:not(:disabled) { background: #2563eb; }
-.btn-submit:disabled { background: #cbd5e1; cursor: not-allowed; }
+.add-photo:hover { border-color: var(--brand-500); color: var(--brand-600); }
+
+.hint { font-size: var(--font-12); color: var(--ink-400); margin: 0; }
+.hint.center { text-align: center; }
+.error { margin: 0; }
+.link { color: var(--brand-600); cursor: pointer; text-decoration: underline; margin-left: 6px; }
 </style>

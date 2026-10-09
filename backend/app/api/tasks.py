@@ -16,7 +16,12 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
 from app.core.config import settings
-from app.core.db import upsert_case
+from app.core.db import (
+    get_flow_status,
+    insert_timeline,
+    set_case_flow_status,
+    upsert_case,
+)
 from app.graph.builder import graph
 from app.graph.state import State
 from app.schemas.models import AnalyzeResult, TaskInfo
@@ -269,6 +274,15 @@ class TaskManager:
                 result=result if result is not None else self._result_dump(task_info),
                 error=task_info.error,
             )
+            # 双端联动：案件创建时记初始事件；分析完成后自动推进到"待交警受理"
+            if task_info.status == "pending":
+                insert_timeline(task_info.task_id, "status", "案件已提交", "车主已提交事故材料，等待 AI 研判")
+            elif task_info.status == "done" and get_flow_status(task_info.task_id) == "submitted":
+                set_case_flow_status(
+                    task_info.task_id,
+                    "pending_review",
+                    note="AI 多智能体研判完成，已进入交警受理队列",
+                )
         except Exception:  # noqa: BLE001
             logger.exception("persist task %s failed", task_info.task_id)
 

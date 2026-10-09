@@ -3,7 +3,16 @@ from app.api.routers.auth import router as auth_router
 from app.api.routers.cases import router as cases_router
 from app.api.routers.chat import router as chat_router
 from app.api.routers.config import router as config_router
+from app.api.routers.interact import router as interact_router
 from app.api.routers.police import router as police_router
 from app.api.routers.progress import router as progress_router
 
-__all__ = ["auth_router", "cases_router", "chat_router", "config_router", "police_router", "progress_router"]
+__all__ = [
+    "auth_router",
+    "cases_router",
+    "chat_router",
+    "config_router",
+    "interact_router",
+    "police_router",
+    "progress_router",
+]

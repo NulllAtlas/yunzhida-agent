@@ -1,97 +1,125 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import AppNavbar from '../components/AppNavbar.vue'
+import ResultCard from '../components/ResultCard.vue'
+import EmergencySteps from '../components/EmergencySteps.vue'
+import CaseFlowBadge from '../components/CaseFlowBadge.vue'
+import PoliceActionPanel from '../components/PoliceActionPanel.vue'
+import { toAIResult } from '../api/result'
+import { authHeaders } from '../api/auth'
+import type { AIResult, HistoryRecord } from '../types'
+
+const route = useRoute()
+const router = useRouter()
+const id = String(route.params.id)
+
+const record = ref<HistoryRecord | null>(null)
+const error = ref('')
+const downloading = ref(false)
+
+const aiResult = computed<AIResult | null>(() =>
+  record.value?.result ? toAIResult(record.value.result) : null,
+)
+const flowStatus = computed(() => record.value?.flow_status || 'submitted')
+
+async function loadDetail() {
+  error.value = ''
+  try {
+    const res = await fetch(`/api/cases/${id}`, { headers: authHeaders() })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) throw new Error(body?.msg || `HTTP ${res.status}`)
+    record.value = body?.data || null
+  } catch (e: any) {
+    error.value = e?.message || '加载案件失败'
+  }
+}
+
+async function downloadDraft() {
+  downloading.value = true
+  try {
+    const res = await fetch(`/api/cases/${id}/draft`, { headers: authHeaders() })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const text = await res.text()
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `draft-${id}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e: any) {
+    error.value = `导出失败：${e?.message || '未知错误'}`
+  } finally {
+    downloading.value = false
+  }
+}
+
+onMounted(loadDetail)
+</script>
+
 <template>
-  <div class="page" v-if="record">
-    <button class="btn-back-top" @click="$router.back()">← 返回列表</button>
+  <div class="pd">
+    <AppNavbar badge="交警端" />
 
-    <h1 class="title">案件详情 · {{ record.id }}</h1>
+    <div class="t-page">
+      <button class="t-link back" @click="router.back()">← 返回案件列表</button>
 
-    <div class="case-head">
-      <img :src="record.img" class="cover" />
-      <div>
-        <p class="time">上报时间：{{ record.time }}</p>
-        <p :class="['status', record.status]">
-          状态：{{ record.status === 'done' ? '已完成' : '处理中' }}
-        </p>
+      <div class="head-row">
+        <div>
+          <h1 class="page-title">案件详情</h1>
+          <p class="case-no mono">案件编号：{{ id }}</p>
+        </div>
+        <div class="head-actions">
+          <CaseFlowBadge v-if="record" :status="flowStatus" />
+          <button v-if="record && aiResult" class="t-btn ghost sm" :disabled="downloading" @click="downloadDraft">
+            ⬇️ 导出认定书草稿
+          </button>
+        </div>
       </div>
+
+      <p v-if="error" class="t-alert error">{{ error }} <router-link to="/police" class="t-link">返回</router-link></p>
+      <div v-else-if="!record" class="t-empty">加载中…</div>
+
+      <template v-else>
+        <!-- AI 研判结果 -->
+        <section v-if="aiResult" class="result-block">
+          <ResultCard :result="aiResult" />
+          <EmergencySteps v-if="aiResult.emergency.length" :steps="aiResult.emergency" />
+        </section>
+        <p v-else class="t-alert info">该案件尚未出具判定结果。</p>
+
+        <!-- 交警操作面板（受理 / 下发消息 / 推进状态 / 下发处理意见） -->
+        <section class="action-block">
+          <h2 class="t-section">审核与下发操作</h2>
+          <p class="block-tip">操作会实时写入时间线并同步到车主端，全程留痕。</p>
+          <div class="t-card action-card">
+            <PoliceActionPanel :key="'ops-' + id" :task-id="id" @changed="loadDetail" />
+          </div>
+        </section>
+      </template>
     </div>
-
-    <h2 class="section-title">AI 研判结果</h2>
-    <ResultCard :result="record.result" />
-
-    <h2 class="section-title">应急处置</h2>
-    <EmergencySteps :steps="record.result.emergency" />
-
-    <h2 class="section-title">审核操作</h2>
-    <div class="audit-box">
-      <textarea
-        v-model="comment"
-        class="comment"
-        placeholder="填写审核意见（选填）"
-      ></textarea>
-      <div class="audit-btns">
-        <button class="btn-pass" @click="doAudit('通过')">审核通过</button>
-        <button class="btn-reject" @click="doAudit('驳回')">驳回</button>
-      </div>
-      <p v-if="doneMsg" class="done-msg">{{ doneMsg }}</p>
-    </div>
-  </div>
-
-  <div v-else class="page">
-    <p class="not-found">未找到该案件，<a @click="$router.back()">返回列表</a></p>
   </div>
 </template>
 
-<script setup lang="ts">
-import { ref } from 'vue'
-import { useRoute } from 'vue-router'
-import { mockCases } from '../mock/cases.mock'
-import ResultCard from '../components/ResultCard.vue'
-import EmergencySteps from '../components/EmergencySteps.vue'
-import type { CaseRecord } from '../types'
-
-const route = useRoute()
-const record = ref<CaseRecord | null>(mockCases.find(c => c.id === route.params.id) || null)
-
-const comment = ref('')
-const doneMsg = ref('')
-
-async function doAudit(action: '通过' | '驳回') {
-  doneMsg.value = ''
-  try {
-    const res = await fetch('/api/audit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: record.value!.id, action, comment: comment.value }),
-    })
-    if (!res.ok) throw new Error(`请求失败 (${res.status})`)
-    const json = await res.json()
-    if (json.code !== 0) throw new Error(json.msg)
-    record.value!.status = action === '通过' ? 'done' : 'processing'
-    doneMsg.value = `已${action}（服务端已落库）`
-  } catch (e: any) {
-    console.warn('审核接口未通，仅前端提示', e)
-    record.value!.status = action === '通过' ? 'done' : 'processing'
-    doneMsg.value = `已${action}（本地模拟，刷新后还原）`
-  }
-}
-</script>
-
 <style scoped>
-.page { max-width: 760px; margin: 0 auto; padding: 20px 16px; }
-.btn-back-top { background: none; border: none; color: #3b82f6; cursor: pointer; font-size: 14px; margin-bottom: 8px; }
-.title { text-align: center; color: #1e293b; margin-bottom: 20px; }
-.case-head { display: flex; align-items: center; gap: 16px; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; }
-.cover { width: 140px; height: 96px; object-fit: cover; border-radius: 6px; }
-.time { font-size: 14px; color: #475569; }
-.status { font-size: 13px; margin-top: 6px; }
-.status.done { color: #16a34a; }
-.status.processing { color: #ca8a04; }
-.section-title { font-size: 16px; color: #334155; margin: 24px 0 12px; border-left: 4px solid #3b82f6; padding-left: 8px; }
-.audit-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; }
-.comment { width: 100%; min-height: 70px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; font-size: 14px; resize: vertical; box-sizing: border-box; }
-.audit-btns { display: flex; gap: 12px; margin-top: 12px; }
-.btn-pass { flex: 1; padding: 10px; background: #16a34a; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
-.btn-reject { flex: 1; padding: 10px; background: #ef4444; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
-.done-msg { margin-top: 12px; color: #16a34a; font-size: 14px; text-align: center; }
-.not-found { text-align: center; color: #94a3b8; padding: 40px 0; }
-.not-found a { color: #3b82f6; cursor: pointer; }
+.back { margin-bottom: var(--space-3); }
+.head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.page-title { font-size: var(--font-24); font-weight: 800; }
+.case-no { margin-top: 4px; font-size: var(--font-13); color: var(--ink-400); }
+.mono { font-family: var(--font-mono); }
+.head-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+
+.result-block { margin-bottom: var(--space-6); }
+.result-block :deep(.card) { margin-bottom: var(--space-4); }
+
+.action-block { margin-top: var(--space-2); }
+.block-tip { font-size: var(--font-12); color: var(--ink-400); margin-bottom: var(--space-3); }
+.action-card { padding: var(--space-5); }
 </style>
