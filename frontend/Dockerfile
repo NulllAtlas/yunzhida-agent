@@ -1,4 +1,4 @@
-# RoadMind 前端镜像（D9）：Node 构建 → Nginx 托管静态产物
+# 云智达 前端镜像（D9）：Node 构建 → Nginx 托管静态产物
 FROM node:20-alpine AS build
 
 WORKDIR /app

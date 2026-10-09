@@ -1,6 +1,10 @@
 """交警端路由（D7）：案件列表 / 案件详情 / 认定书草稿导出。
 
 案件数据来自 SQLite（由 TaskManager 在多智能体流水线完成后写入）。
+
+鉴权口径：列表/详情/草稿导出是**读取**，任意登录用户可看（前端入口页允许车主账号
+进入交警端查看流转与下发内容）；下发消息/处理意见/推进状态等**写操作**在
+`routers/interact.py` 内仍要求 police 角色。
 """
 from __future__ import annotations
 
@@ -9,7 +13,7 @@ from fastapi.responses import PlainTextResponse
 
 from app.core.db import get_case, list_cases
 from app.core.errors import ApiError
-from app.core.security import require_role
+from app.core.security import get_current_user
 
 router = APIRouter(prefix="/api/cases", tags=["police"])
 
@@ -26,14 +30,16 @@ _PARTY_LABEL = {
 async def cases(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    _user: dict = Depends(require_role("police")),
+    _user: dict = Depends(get_current_user),
 ) -> dict:
     """交警端案件列表（摘要）。"""
     return {"code": 0, "msg": "ok", "data": list_cases(limit=limit, offset=offset)}
 
 
 @router.get("/{task_id}")
-async def case_detail(task_id: str, _user: dict = Depends(require_role("police"))) -> dict:
+async def case_detail(
+    task_id: str, _user: dict = Depends(get_current_user)
+) -> dict:
     """案件详情（含完整判定与应急结果）。"""
     case = get_case(task_id)
     if not case:
@@ -42,7 +48,9 @@ async def case_detail(task_id: str, _user: dict = Depends(require_role("police")
 
 
 @router.get("/{task_id}/draft", response_class=PlainTextResponse)
-async def case_draft(task_id: str, _user: dict = Depends(require_role("police"))) -> PlainTextResponse:
+async def case_draft(
+    task_id: str, _user: dict = Depends(get_current_user)
+) -> PlainTextResponse:
     """导出《道路交通事故认定书（草稿）》纯文本。"""
     case = get_case(task_id)
     if not case:

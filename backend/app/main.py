@@ -1,17 +1,25 @@
-"""RoadMind 后端入口。"""
+"""云智达 后端入口。"""
 from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app.api import auth_router, cases_router, police_router, progress_router, uploads_router
+from app.api import (
+    auth_router,
+    cases_router,
+    chat_router,
+    config_router,
+    interact_router,
+    police_router,
+    progress_router,
+)
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.errors import register_exception_handlers
@@ -40,27 +48,22 @@ register_request_logging(app)
 register_exception_handlers(app)
 
 app.include_router(auth_router)      # D7：注册 / 登录 / JWT
-app.include_router(uploads_router)   # D1/D2：视频上传落盘（返回 video_id）
 app.include_router(cases_router)     # D1/D2：创建案件 / 状态 / 结果 / 指标
 app.include_router(police_router)    # D7：交警端案件列表 / 详情 / 草稿导出
 app.include_router(progress_router)  # D4/D5：WebSocket 进度推送
+app.include_router(interact_router)  # D12：双端联动（状态流转 / 交警下发 / 车主查看）
+app.include_router(config_router)    # 运行时切换大模型（界面右上角模型选择）
+app.include_router(chat_router)      # 对话接口（多轮对话透传 MoMA）
 
-# 静态前端（打包产物 dist），便于本地一键演示
-_FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-if _FRONTEND_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=_FRONTEND_DIR / "assets"), name="assets")
-
-
-@app.get("/", include_in_schema=False)
-async def index():
-    index_file = _FRONTEND_DIR / "index.html"
-    if index_file.exists():
-        return FileResponse(index_file)
-    return {"message": "RoadMind API 运行中。前端未打包，请先 npm run build。"}
+# 事故车辆标注关键帧：视频感知后落在 outputs 目录，这里静态暴露成 /outputs/*，
+# 界面直接用 URL 展示标注图。必须在 Gradio mount("/") 之前注册，否则被根路径接管
+Path(settings.output_dir).mkdir(parents=True, exist_ok=True)
+app.mount("/outputs", StaticFiles(directory=settings.output_dir), name="outputs")
 
 
 @app.get("/health")
 async def health():
+    """健康检查 + 运行配置（前端首页据此显示当前连接的模型与运行模式）。"""
     return {
         "status": "ok",
         "app": settings.app_name,
@@ -68,6 +71,9 @@ async def health():
         "use_mock": settings.use_mock,
         "rag_backend": rag_service.backend,
         "llm_configured": bool(settings.moma_base_url),
+        "model_strong": settings.model_strong,
+        "model_fast": settings.model_fast,
+        "algo_model": settings.algo_model_name,
         "max_concurrency": settings.max_concurrency,
     }
 
@@ -129,3 +135,19 @@ async def audit(req: AuditReq):
     """交警审核案件（P4 联调占位）。"""
     print(f"[AUDIT] id={req.id} action={req.action} comment={req.comment}")
     return {"code": 0, "msg": f"已{req.action}", "data": {"id": req.id, "action": req.action}}
+
+
+# ==================== 后端主界面（Gradio） ====================
+# Gradio（豆包风格，车主端/交警端模式切换）挂载到根路径，
+# 访问 http://127.0.0.1:8000/ 即完整智能体界面。
+# 必须注册在所有 API 路由之后：FastAPI 按注册顺序匹配，/api/* 与 /health 优先命中，
+# 其余路径（根路径）落到 Gradio 界面。
+import gradio as gr
+
+from app.ui.gradio_ui import _CUSTOM_CSS
+from app.ui.gradio_ui import demo as gradio_demo
+
+# css 须通过 mount 传入（Gradio 6.0 中 css/theme 从 Blocks 构造器移到了 launch/mount）
+app = gr.mount_gradio_app(
+    app, gradio_demo, path="/", css=_CUSTOM_CSS, footer_links=[]
+)

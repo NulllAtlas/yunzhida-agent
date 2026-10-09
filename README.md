@@ -3,21 +3,22 @@
 2026年"移动云杯"智算应用创新大赛 — 模型应用赛参赛项目仓库。
 基于移动云 MoMA 平台构建智能体（Agent）应用。
 
-本次参赛作品 **RoadMind · 交通事故辅助研判智能体**：基于**视频感知 + 多智能体研判**的事故辅助系统，服务两类用户：
+本次参赛作品 **云智达 · 交通事故辅助研判智能体**：基于**视频感知 + 多智能体研判**的事故辅助系统，服务两类用户：
 
 - **车主**：上传行车记录仪视频 → 即时获得"是否拨打 120/122"级联提示、应急处置步骤、责任预判概览。
 - **交警**：上传/选择案件 → 查看责任认定详情（依据 + 证据 + 理由分条）→ 导出认定书草稿。
+
+> 仓库结构说明：原 `agent/` 归档子目录的内容已提升至仓库根目录，仓库当前以单一项目根目录组织，`backend/`、`frontend/`、`docs/`、`data/`、`deploy/` 直接位于根下。
 
 ## 仓库结构
 
 ```
 yunzhida-agent/
 ├── docs/        # 作品说明书、PPT定稿、评审材料归档
-│   └── roadmind/                      # RoadMind 方案/架构/分工/契约/脚本
+│   └── roadmind/                      # 云智达 方案/架构/分工/契约/脚本
 ├── data/        # 案例库 / 评测集
 │   ├── cases/
 │   └── eval/
-├── agent/       # MoMA平台侧资产：Prompt设计、工作流编排、配置导出
 ├── backend/     # FastAPI + LangGraph 后端（perceive→retrieve→judge→respond→aggregate）
 ├── frontend/    # Vue3 双端前端（车主端 / 交警端）
 ├── deploy/docs/ # 部署与运维文档（RUNBOOK）
@@ -30,7 +31,7 @@ yunzhida-agent/
 ## 快速开始
 
 ```bash
-git clone <仓库地址>
+git clone https://github.com/NulllAtlas/yunzhida-agent.git
 cd yunzhida-agent
 cp .env.example .env   # 然后把群里发的真实 Key 填进 .env
 ```
@@ -43,7 +44,7 @@ cp .env.example .env   # 然后把群里发的真实 Key 填进 .env
 docker compose up --build   # 前端 http://localhost:8080 ，后端 http://localhost:8000/docs
 ```
 
-## 文档索引（RoadMind）
+## 文档索引（云智达）
 
 | 文档 | 内容 | 产出自 |
 | --- | --- | --- |
@@ -58,7 +59,7 @@ docker compose up --build   # 前端 http://localhost:8080 ，后端 http://loca
 | `docs/roadmind/API.md` | 后端接口契约 | P2 |
 | `docs/roadmind/SCENE-SCHEMA.md` | scene.json 结构 | P3 |
 | `docs/roadmind/CONTRACTS.md` | judgment/response 契约 | P2+P3 |
-| `docs/roadmind/DEMO-SCRIPT.md` | 演示脚本（Day9） | P1 |
+| `docs/roadmind/P1-TODO.md` | P1 每日工作清单 | P1 |
 | `deploy/docs/RUNBOOK.md` | 后端部署 / 换模型 / 加规则 / 排障 | P2 |
 
 ## 协作约定

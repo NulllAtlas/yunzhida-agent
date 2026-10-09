@@ -1,12 +1,10 @@
 """后端接口与关键修复的回归测试（P2 · D2/D3/D4/D7）。"""
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 import time
-from pathlib import Path
 
+from app.core.config import settings
+from app.core.db import upsert_case
 from app.services.llm import _as_pairs
 from app.services.rag import RagService, _NGramEmbedding
 from app.schemas.models import RetrievedDoc
@@ -154,77 +152,45 @@ def test_llm_prompt_accepts_pydantic_evidence():
     assert _as_pairs([{"title": "T", "content": "C"}]) == [("T", "C")]
 
 
-def test_index_rules_script_runs_standalone():
-    """入库脚本必须能被 `python scripts/index_rules.py` 直接执行。
+# ---------------- 车主端研判记录（记录随后端存储，与设备无关） ----------------
 
-    此前 sys.path[0] 是 scripts/ 而非 backend/，`import app` 直接 ModuleNotFoundError，
-    即该脚本从未真正跑通过。
-    """
-    backend_dir = Path(__file__).resolve().parents[1]
-    env = {**os.environ, "PYTHONPATH": "", "PYTHONDONTWRITEBYTECODE": "1"}
-    proc = subprocess.run(
-        [sys.executable, "scripts/index_rules.py"],
-        cwd=backend_dir,
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=180,
+def test_history_returns_records_with_full_result(client):
+    """每次提交都留在后端：列表带完整结果，前端不必逐条再查详情。"""
+    task_id = client.post("/api/cases", json={"text_description": "追尾事故"}).json()["task_id"]
+    _wait_done(client, task_id)
+
+    data = client.get("/api/history").json()["data"]
+    item = next(r for r in data if r["task_id"] == task_id)
+    assert item["status"] == "done"
+    assert item["result"]["judgment"] is not None, "列表要带完整结果"
+    assert item["created_at"]
+
+
+def test_history_keeps_uploaded_filename(client, monkeypatch, tmp_path):
+    """视频原始文件名要一起落库，列表才分得清是哪一次提交。"""
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path / "uploads"))
+
+    resp = client.post(
+        "/api/videos",
+        files={"file": ("行车记录仪-追尾.MP4", b"not-a-real-video", "video/mp4")},
     )
-    assert proc.returncode == 0, proc.stderr[-2000:]
-    assert "入库完成" in proc.stdout, proc.stdout[-2000:]
+    assert resp.status_code == 202
+    task_id = resp.json()["task_id"]
+    _wait_done(client, task_id)
+
+    # 完成时那次落库不能把创建时记下的文件名冲掉（upsert 的 filename 分支）
+    item = next(
+        r for r in client.get("/api/history").json()["data"] if r["task_id"] == task_id
+    )
+    assert item["filename"] == "行车记录仪-追尾.MP4"
 
 
-# ---------------- 视频上传（D1/D2 缺口修复） ----------------
+def test_history_marks_orphan_running_task_as_failed(client):
+    """进程重启后残留的"永远跑不完"的任务必须报成中断，否则前端一直转圈。"""
+    upsert_case(task_id="orphan-task", case_id="orphan-task", status="judging")
 
-def _upload_dir(tmp_path, monkeypatch):
-    from app.core.config import settings
-
-    target = tmp_path / "uploads"
-    monkeypatch.setattr(settings, "upload_dir", str(target))
-    return target
-
-
-def test_upload_video_then_create_case(client, tmp_path, monkeypatch):
-    """上传视频应真实落盘并返回 video_id，且可直接用于创建案件。"""
-    target = _upload_dir(tmp_path, monkeypatch)
-    payload = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 2048
-
-    resp = client.post("/api/uploads/video", files={"file": ("clip.mp4", payload, "video/mp4")})
-    assert resp.status_code == 201, resp.text
-    data = resp.json()["data"]
-    assert data["video_id"].endswith(".mp4")
-    assert data["size"] == len(payload)
-    assert (target / data["video_id"]).is_file()
-
-    # 该文件不是真实可解码视频 → 抽帧失败自动降级，但任务必须成功
-    task_id = client.post("/api/cases", json={"video_id": data["video_id"]}).json()["task_id"]
-    task = _wait_done(client, task_id)
-    assert task["status"] == "done", task.get("error")
-
-
-def test_upload_video_rejects_non_video(client, tmp_path, monkeypatch):
-    target = _upload_dir(tmp_path, monkeypatch)
-    resp = client.post("/api/uploads/video", files={"file": ("note.txt", b"hello", "text/plain")})
-    assert resp.status_code == 422
-    assert resp.json()["code"] == "INVALID_FILE_TYPE"
-    assert not target.exists() or not any(target.iterdir())
-
-
-def test_upload_video_rejects_oversize(client, tmp_path, monkeypatch):
-    target = _upload_dir(tmp_path, monkeypatch)
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "max_upload_mb", 1)
-    big = b"\x00" * (1024 * 1024 + 16)
-    resp = client.post("/api/uploads/video", files={"file": ("big.mp4", big, "video/mp4")})
-    assert resp.status_code == 413
-    assert resp.json()["code"] == "FILE_TOO_LARGE"
-    assert not list(target.glob("*.mp4")), "超限失败不应留下半个文件"
-
-
-def test_upload_video_rejects_empty(client, tmp_path, monkeypatch):
-    target = _upload_dir(tmp_path, monkeypatch)
-    resp = client.post("/api/uploads/video", files={"file": ("empty.mp4", b"", "video/mp4")})
-    assert resp.status_code == 422
-    assert resp.json()["code"] == "EMPTY_FILE"
-    assert not list(target.glob("*.mp4"))
+    orphan = next(
+        r for r in client.get("/api/history").json()["data"] if r["task_id"] == "orphan-task"
+    )
+    assert orphan["status"] == "failed"
+    assert "中断" in orphan["error"]

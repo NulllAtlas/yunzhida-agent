@@ -1,20 +1,14 @@
-# RoadMind 后端依赖
-fastapi==0.115.6
+# 云智达 后端依赖
+fastapi==0.142.4
 uvicorn[standard]==0.32.1
 langgraph==0.2.60
-# langchain-openai==0.3.5 要求 langchain-core>=0.3.34，而 langgraph 0.2.60 要求 <0.4.0：
-# 三者交集为 0.3.34，写成 0.3.33 会导致 pip ResolutionImpossible（容器内构建时才暴露）
 langchain-core==0.3.34
 langchain-openai==0.3.5
 pydantic==2.10.4
 pydantic-settings==2.7.1
 python-multipart==0.0.20
 openai==1.59.6
-# 感知服务适配层（D6）直接用 httpx 调用 P3 的 POST /perceive
-httpx==0.28.1
-# 分帧/抽帧（D8）用 headless 版：非 headless 的 opencv-python 依赖 libGL.so.1，
-# 在 python:3.12-slim 容器里 import cv2 会直接失败（API 无需 GUI，headless 完全够用）
-opencv-python-headless==4.10.0.84
+opencv-python==4.10.0.84
 numpy==1.26.4
 chromadb==0.5.23
 # chromadb 导入期会实例化 DefaultEmbeddingFunction，缺少 onnxruntime 会导致 import 失败
@@ -23,5 +17,11 @@ onnxruntime==1.20.1
 PyYAML==6.0.2
 # 鉴权（D7）
 PyJWT==2.10.1
+# 视频感知真实检测（M1，app/algo/video_tracker）：会连带 torch，体积大；
+# use_mock=True 时不需要安装（导入惰性加载）
+ultralytics>=8.3.0,<9.0.0
+# Gradio 界面（frontend/gradio_app.py，豆包风格交互）
+gradio==6.29.1
+requests==2.32.3
 # 测试
 pytest==9.1.1

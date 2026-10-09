@@ -1,15 +1,17 @@
 <template>
   <div class="card">
-    <h3>🔍 AI 判定结果</h3>
+    <div class="card-head">
+      <h3>AI 判定结果</h3>
+      <span :class="['conf-badge', confLevel]">{{ result.confidence }}% 置信</span>
+    </div>
 
     <p class="fault">{{ result.fault }}</p>
 
     <div class="block">
       <p class="block-title">责任认定</p>
       <p class="resp">{{ result.responsibility }}</p>
-      <p class="conf">
-        判定置信度 <span :class="['conf-val', confLevel]">{{ result.confidence }}%</span>
-        <span v-if="result.confidence < 60" class="conf-tip">（置信度较低，仅供参考）</span>
+      <p v-if="result.red_light" class="red-light">
+        <span class="mini-tag">闯红灯</span>{{ result.red_light }}
       </p>
     </div>
 
@@ -29,7 +31,10 @@
     <div v-for="p in result.parties" :key="'r-' + p.party" class="block">
       <p class="block-title">{{ p.party }} · 认定理由</p>
       <ul class="reasons">
-        <li v-for="(r, i) in p.reasons" :key="i">{{ r }}</li>
+        <li v-for="(r, i) in p.reasons" :key="i">
+          <span class="li-dot"></span>
+          <span>{{ r }}</span>
+        </li>
       </ul>
     </div>
 
@@ -37,12 +42,39 @@
     <div v-if="result.laws.length" class="block">
       <p class="block-title">法条依据</p>
       <ul class="laws">
-        <li v-for="(l, i) in result.laws" :key="i">
+        <li v-for="(l, i) in result.laws" :key="i" class="law">
           <span class="clause">{{ l.clause }}</span>
           <span class="law-summary">{{ l.summary }}</span>
         </li>
       </ul>
     </div>
+
+    <!-- 事故车辆识别框 -->
+    <div v-if="result.keyframes?.length" class="block">
+      <p class="block-title">事故车辆识别框（{{ result.keyframes.length }} 帧）</p>
+      <div class="keyframes">
+        <figure v-for="(k, i) in result.keyframes" :key="i" class="kframe">
+          <img :src="k.url" :alt="k.caption" loading="lazy" />
+          <figcaption>{{ k.caption }}</figcaption>
+        </figure>
+      </div>
+    </div>
+
+    <!-- 现场照片证据 -->
+    <div v-if="result.photos?.length" class="block">
+      <p class="block-title">现场照片证据（{{ result.photos.length }} 张）</p>
+      <ul class="photos">
+        <li v-for="(p, i) in result.photos" :key="i" class="photo">
+          <span class="photo-name">{{ p.name }}</span>
+          <span class="photo-sum">检出 {{ p.summary }} · 信号灯 {{ p.trafficLight }}</span>
+          <span v-if="p.note" class="photo-note">{{ p.note }}</span>
+        </li>
+      </ul>
+    </div>
+
+    <p v-if="result.note" class="note">
+      <span class="note-ic">ℹ️</span>{{ result.note }}
+    </p>
   </div>
 </template>
 
@@ -60,34 +92,127 @@ const confLevel = computed(() => {
 </script>
 
 <style scoped>
-.card {
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 20px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-  text-align: left;
+.card { text-align: left; }
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
 }
-h3 { color: #1e293b; margin-bottom: 12px; }
-.fault { font-size: 15px; color: #334155; margin: 0 0 16px; }
-.block { margin-bottom: 16px; }
-.block-title { font-size: 13px; color: #94a3b8; margin: 0 0 8px; font-weight: 600; }
-.resp { font-size: 18px; color: #1e293b; font-weight: 700; margin: 0 0 4px; }
-.conf { font-size: 13px; color: #64748b; margin: 0; }
-.conf-val { font-weight: 700; }
-.conf-val.high { color: #16a34a; }
-.conf-val.mid { color: #f59e0b; }
-.conf-val.low { color: #dc2626; }
-.conf-tip { color: #dc2626; }
+.card-head h3 {
+  font-size: var(--font-16);
+  font-weight: 800;
+  color: var(--ink-900);
+}
+.conf-badge {
+  font-size: var(--font-12);
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+}
+.conf-badge.high { background: var(--success-bg); color: var(--success); }
+.conf-badge.mid { background: var(--warning-bg); color: var(--warning); }
+.conf-badge.low { background: var(--danger-bg); color: var(--danger); }
 
-.ratio-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.ratio-name { width: 90px; font-size: 13px; color: #334155; flex-shrink: 0; }
-.ratio-track { flex: 1; height: 12px; background: #e2e8f0; border-radius: 6px; overflow: hidden; }
-.ratio-fill { height: 100%; background: #3b82f6; border-radius: 6px; }
-.ratio-val { width: 40px; text-align: right; font-size: 13px; font-weight: 600; color: #1e293b; }
+.fault {
+  font-size: var(--font-15);
+  color: var(--ink-700);
+  line-height: 1.7;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
 
-.reasons, .laws { margin: 0; padding-left: 20px; }
-.reasons li, .laws li { font-size: 14px; color: #334155; line-height: 1.6; }
-.clause { display: block; font-weight: 600; color: #1e293b; }
-.law-summary { color: #475569; }
+.block { margin-bottom: 18px; }
+.block-title {
+  font-size: var(--font-13);
+  font-weight: 700;
+  color: var(--ink-500);
+  margin-bottom: 8px;
+  letter-spacing: 0.2px;
+}
+.resp {
+  font-size: var(--font-18);
+  color: var(--ink-900);
+  font-weight: 800;
+  line-height: 1.5;
+}
+.red-light { display: inline-flex; align-items: center; gap: 8px; margin-top: 6px; font-size: var(--font-14); color: var(--ink-700); }
+.mini-tag {
+  font-size: var(--font-12);
+  color: var(--danger);
+  background: var(--danger-bg);
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  font-weight: 600;
+}
+
+.ratio-row { display: flex; align-items: center; gap: 12px; margin-bottom: 9px; }
+.ratio-name { width: 96px; flex-shrink: 0; font-size: var(--font-13); font-weight: 600; color: var(--ink-700); }
+.ratio-track { flex: 1; height: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.ratio-fill {
+  height: 100%;
+  background: var(--gradient-brand);
+  border-radius: 6px;
+  transition: width 0.4s ease;
+}
+.ratio-val { width: 44px; text-align: right; font-size: var(--font-13); font-weight: 800; color: var(--ink-900); font-variant-numeric: tabular-nums; }
+
+.reasons, .laws, .photos { display: grid; gap: 8px; }
+.reasons li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: var(--font-14);
+  color: var(--ink-700);
+  line-height: 1.6;
+}
+.li-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  margin-top: 8px;
+  border-radius: 50%;
+  background: var(--brand-500);
+}
+
+.law {
+  padding: 11px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--brand-500);
+  border-radius: var(--radius-sm);
+}
+.clause { display: block; font-weight: 700; color: var(--ink-900); font-size: var(--font-14); }
+.law-summary { color: var(--ink-500); font-size: var(--font-13); line-height: 1.6; }
+
+.photo-name { font-weight: 700; color: var(--ink-900); }
+.photo-sum { color: var(--ink-500); }
+.photo-note { display: block; color: var(--ink-400); font-size: var(--font-12); }
+.photos li { font-size: var(--font-13); color: var(--ink-700); line-height: 1.7; }
+
+.keyframes { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.kframe { margin: 0; }
+.kframe img {
+  width: 100%;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.kframe figcaption { font-size: var(--font-12); color: var(--ink-500); margin-top: 6px; }
+
+.note {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border-top: 1px dashed var(--border);
+  font-size: var(--font-12);
+  color: var(--ink-400);
+  line-height: 1.7;
+  display: flex;
+  gap: 8px;
+}
+.note-ic { flex-shrink: 0; }
 </style>
