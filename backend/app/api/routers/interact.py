@@ -1,7 +1,8 @@
-"""双端联动路由（D12）：案件状态流转 + 交警下发消息/处理意见 + 车主查看。
+"""双端联动路由（D12）：案件状态流转 + 交警下发消息/处理意见 + 车主查看/回执。
 
 - 车主端：`GET /api/cases/{task_id}/interact` 查看该案件的流转时间线与交警下发内容
   （与 /api/history 一致不做鉴权，保证车主在任意设备都能看到）；
+  `POST /api/cases/{task_id}/interact/ack` 车主回执（B3）：标记已接收并推进到 received；
 - 交警端（需 police 角色）：
     `POST /api/cases/{task_id}/police/message`      下发消息
     `POST /api/cases/{task_id}/police/disposition`  下发处理意见（处分）
@@ -16,10 +17,12 @@ from pydantic import BaseModel, Field
 
 from app.core.db import (
     FLOW_STATUS_LABEL,
+    ack_case_messages,
     add_case_message,
     get_case,
     get_flow_status,
     list_timeline,
+    pending_ack_count,
     set_case_disposition,
     set_case_flow_status,
 )
@@ -27,6 +30,9 @@ from app.core.errors import ApiError
 from app.core.security import require_role
 
 router = APIRouter(prefix="/api/cases", tags=["interact"])
+
+# 允许车主回执的前置状态：交警已下发处理意见之后（已下发 → 车主已接收）
+_ACKABLE_FLOWS = ("dispensed", "received")
 
 
 def _ensure_case(task_id: str) -> None:
@@ -76,7 +82,38 @@ async def case_interact(task_id: str) -> dict[str, Any]:
             "task_id": task_id,
             "flow_status": flow,
             "flow_label": FLOW_STATUS_LABEL.get(flow, flow),
+            # 未回执条数（B3）：车主端据此提示"有 N 条新下发待接收"
+            "pending_ack": pending_ack_count(task_id),
             "timeline": list_timeline(task_id),
+        },
+    }
+
+
+@router.post("/{task_id}/interact/ack")
+async def case_ack(task_id: str) -> dict[str, Any]:
+    """车主回执（B3）：标记交警下发的消息/处理意见为已接收，并推进到 received。
+
+    与查看接口一致不做鉴权（车主端无强制账号，任意设备都能确认接收）。
+    幂等：重复回执不报错、不重复记录，已回执条数为 0。
+    """
+    _ensure_case(task_id)
+    flow = get_flow_status(task_id)
+    if flow not in _ACKABLE_FLOWS:
+        raise ApiError(
+            "NOT_DISPENSED", "交警尚未下发处理意见，暂无可回执内容", 422
+        )
+
+    acked = ack_case_messages(task_id)
+    if flow == "dispensed":
+        set_case_flow_status(task_id, "received", note="车主已接收并回执交警下发内容")
+    return {
+        "code": 0,
+        "msg": "ok",
+        "data": {
+            "acked": acked,
+            "pending_ack": pending_ack_count(task_id),
+            "flow_status": get_flow_status(task_id),
+            "flow_label": FLOW_STATUS_LABEL.get(get_flow_status(task_id), flow),
         },
     }
 

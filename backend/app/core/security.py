@@ -57,6 +57,23 @@ def create_token(username: str, role: str) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_alg)
 
 
+def decode_token(token: str) -> Optional[dict[str, Any]]:
+    """解析令牌并返回对应用户；无效/过期/用户不存在均返回 None。
+
+    给 WebSocket 等无法走 HTTPBearer 依赖的场景用（令牌从 query 参数传入）。
+    """
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_alg])
+    except jwt.PyJWTError:
+        return None
+    user = get_user(str(payload.get("sub", "")))
+    if not user:
+        return None
+    return {"username": user["username"], "role": user["role"]}
+
+
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ) -> dict[str, Any]:
@@ -75,6 +92,18 @@ async def get_current_user(
     if not user:
         raise HTTPException(status_code=401, detail="用户不存在")
     return {"username": user["username"], "role": user["role"]}
+
+
+async def get_optional_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> Optional[dict[str, Any]]:
+    """可选登录：带合法令牌时返回用户，否则返回 None（不报错）。
+
+    用于既能匿名提交、又要在登录时把案件绑定到车主的入口（B2）。
+    """
+    if credentials is None:
+        return None
+    return decode_token(credentials.credentials)
 
 
 def require_role(*roles: str) -> Callable[..., Any]:

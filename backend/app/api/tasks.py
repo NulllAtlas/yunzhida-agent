@@ -15,10 +15,12 @@ import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
+from app.api.notifications import event_hub
 from app.core.config import settings
 from app.core.db import (
     get_flow_status,
     insert_timeline,
+    needs_pre_review_advance,
     set_case_flow_status,
     upsert_case,
 )
@@ -58,6 +60,9 @@ class TaskManager:
         self._media_paths: dict[str, str | None] = {}
         self._filenames: dict[str, str] = {}
         self._photo_paths: dict[str, list[str]] = {}
+        # 案件与车主绑定 + 业务状态机起始态（B2/B4），随任务创建时一起登记
+        self._owners: dict[str, str] = {}
+        self._flow_init: dict[str, str] = {}
         self._subscribers: dict[str, set[asyncio.Queue[dict]]] = {}
         # 持有后台任务的强引用：asyncio 只保存弱引用，create_task 的返回值若无人接管，
         # 任务可能在执行途中被 GC 回收，"任务莫名消失/卡住"就是这么来的。
@@ -69,7 +74,8 @@ class TaskManager:
     # ---------- 状态 ----------
 
     def create(self, input_text: str = "", media_path: str | None = None,
-               filename: str = "", photo_paths: list[str] | None = None) -> TaskInfo:
+               filename: str = "", photo_paths: list[str] | None = None,
+               owner_id: str = "", flow_status: str = "submitted") -> TaskInfo:
         task = TaskInfo(task_id=uuid.uuid4().hex[:12])
         self._tasks[task.task_id] = task
         self.metrics["created"] += 1
@@ -79,6 +85,9 @@ class TaskManager:
         self._filenames[task.task_id] = filename
         # 随附现场照片（落库用；感知节点从 state 里拿的是同一份）
         self._photo_paths[task.task_id] = list(photo_paths or [])
+        # 登录车主提交的案件绑定到账号（B2）；自动取证入口以 forensics 为起始态（B4）
+        self._owners[task.task_id] = owner_id
+        self._flow_init[task.task_id] = flow_status
         self._persist(task, result=None)
         return task
 
@@ -263,28 +272,67 @@ class TaskManager:
 
     def _persist(self, task_info: TaskInfo, result: Optional[dict] = None) -> None:
         """结果落库；落库失败只记日志，不影响主流程。"""
+        task_id = task_info.task_id
+        owner_id = self._owners.get(task_id, "")
         try:
             upsert_case(
-                task_id=task_info.task_id,
-                case_id=task_info.task_id,
+                task_id=task_id,
+                case_id=task_id,
                 status=task_info.status,
-                input_text=self._input_texts.get(task_info.task_id, ""),
-                filename=self._filenames.get(task_info.task_id, ""),
-                photos=self._photo_paths.get(task_info.task_id, []),
+                input_text=self._input_texts.get(task_id, ""),
+                filename=self._filenames.get(task_id, ""),
+                photos=self._photo_paths.get(task_id, []),
                 result=result if result is not None else self._result_dump(task_info),
                 error=task_info.error,
+                owner_id=owner_id,
+                flow_status=self._flow_init.get(task_id, "submitted"),
             )
-            # 双端联动：案件创建时记初始事件；分析完成后自动推进到"待交警受理"
+            # 双端联动：案件创建时记初始事件；分析完成后自动推进到"待交警受理"。
+            # 自动取证入口（B4）起始态是 forensics，标题随起始态走。
             if task_info.status == "pending":
-                insert_timeline(task_info.task_id, "status", "案件已提交", "车主已提交事故材料，等待 AI 研判")
-            elif task_info.status == "done" and get_flow_status(task_info.task_id) == "submitted":
+                flow_init = self._flow_init.get(task_id, "submitted")
+                if flow_init == "forensics":
+                    insert_timeline(
+                        task_id, "status", "行车记录仪自动取证",
+                        "事故触发，已自动调取事发前片段，进入 AI 研判",
+                    )
+                else:
+                    insert_timeline(
+                        task_id, "status", "案件已提交",
+                        "车主已提交事故材料，等待 AI 研判",
+                    )
+            elif task_info.status == "done" and needs_pre_review_advance(task_id):
                 set_case_flow_status(
-                    task_info.task_id,
-                    "pending_review",
+                    task_id, "pending_review",
                     note="AI 多智能体研判完成，已进入交警受理队列",
                 )
         except Exception:  # noqa: BLE001
-            logger.exception("persist task %s failed", task_info.task_id)
+            logger.exception("persist task %s failed", task_id)
+
+        # 双端同步推送（B2）：研判结果同时送达车主端与交警端。
+        # 推送失败绝不能影响主流程，单独兜一层异常。
+        try:
+            event = {
+                "task_id": task_id,
+                "owner_id": owner_id,
+                "status": task_info.status,
+                "filename": self._filenames.get(task_id, ""),
+                "input_text": self._input_texts.get(task_id, ""),
+                "flow_status": get_flow_status(task_id),
+            }
+            if task_info.status == "pending":
+                event["type"] = "case_created"
+            elif task_info.status == "done":
+                event["type"] = "case_done"
+                event["result"] = self._result_dump(task_info)
+            elif task_info.status == "failed":
+                event["type"] = "case_failed"
+                event["error"] = task_info.error
+            else:
+                return
+            event_hub.publish(event)
+        except Exception:  # noqa: BLE001
+            logger.exception("publish event for task %s failed", task_id)
 
 
 task_manager = TaskManager()

@@ -23,8 +23,11 @@ def _now() -> str:
 
 
 # 案件业务状态流转（区别于 cases.status 的分析状态）。
-# submitted → analyzing → pending_review → reviewing → decided / rejected / dispensed → closed
+# 自动取证 → 研判中 → 交警确认 → 已下发 → 车主已接收，贯穿全流程（B4）
+# forensics → submitted/analyzing → pending_review → reviewing
+#           → decided / rejected → dispensed → received → closed
 FLOW_STATUS_LABEL = {
+    "forensics": "行车记录仪自动取证中",
     "submitted": "已提交，待 AI 研判",
     "analyzing": "AI 研判中",
     "pending_review": "已出具研判，待交警受理",
@@ -32,8 +35,14 @@ FLOW_STATUS_LABEL = {
     "decided": "审核通过，责任已认定",
     "rejected": "已驳回，待补充材料",
     "dispensed": "已下发处理意见",
+    "received": "车主已接收并回执",
     "closed": "已结案",
 }
+
+# 分析阶段结束（done）后可自动推进到"待交警受理"的前置状态：
+# 无论起始是手动提交（submitted）、自动取证（forensics）还是研判中（analyzing），
+# 研判完成都应收敛到同一个后续状态。
+_PRE_REVIEW_FLOWS = ("submitted", "forensics", "analyzing")
 
 
 def get_conn() -> sqlite3.Connection:
@@ -65,6 +74,8 @@ def init_db() -> None:
                 task_id          TEXT PRIMARY KEY,
                 case_id          TEXT,
                 status           TEXT NOT NULL,
+                flow_status      TEXT,
+                owner_id         TEXT,
                 input_text       TEXT,
                 filename         TEXT,
                 photos           TEXT,
@@ -84,9 +95,10 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS case_timeline (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_id     TEXT NOT NULL,
-                kind        TEXT NOT NULL,          -- status / message / disposition
+                kind        TEXT NOT NULL,          -- status / message / disposition / forensics / ack
                 title       TEXT,
                 content     TEXT,
+                acked_at    TEXT,                   -- 车主回执时间（B3）；NULL = 尚未回执
                 created_at  TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_timeline_task ON case_timeline(task_id, id);
@@ -112,6 +124,10 @@ def init_db() -> None:
         _ensure_column(conn, "cases", "filename", "filename TEXT")
         _ensure_column(conn, "cases", "photos", "photos TEXT")
         _ensure_column(conn, "cases", "flow_status", "flow_status TEXT")
+        _ensure_column(conn, "cases", "owner_id", "owner_id TEXT")
+        _ensure_column(conn, "case_timeline", "acked_at", "acked_at TEXT")
+        # 索引要在补列之后建：老库执行上面那段脚本时 cases 还没有 owner_id
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cases_owner ON cases(owner_id, created_at DESC)")
         conn.commit()
 
 
@@ -206,8 +222,14 @@ def upsert_case(
     photos: Optional[list[str]] = None,
     result: Optional[dict[str, Any]] = None,
     error: Optional[str] = None,
+    owner_id: str = "",
+    flow_status: str = "submitted",
 ) -> None:
-    """写入/更新案件记录（完成时把关键结论抽成列，便于列表查询）。"""
+    """写入/更新案件记录（完成时把关键结论抽成列，便于列表查询）。
+
+    `owner_id`（案件与车主绑定，B2）与 `flow_status`（业务状态机起始态，B4）
+    只在**首次插入**时生效；更新时保留原值，避免完成时那次落库把它们冲掉。
+    """
     judgment = (result or {}).get("judgment") or {}
     response = (result or {}).get("response") or {}
     responsibility = (judgment.get("responsibility") or {})
@@ -217,13 +239,13 @@ def upsert_case(
         conn.execute(
             """
             INSERT INTO cases (
-                task_id, case_id, status, flow_status, input_text, filename, photos, accident_type,
-                responsibility, split, confidence, priority,
+                task_id, case_id, status, flow_status, owner_id, input_text, filename, photos,
+                accident_type, responsibility, split, confidence, priority,
                 result_json, error, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(task_id) DO UPDATE SET
                 status = excluded.status,
-                -- 结束时的这次落库不该把创建时记下的文件名/照片冲掉
+                -- 结束时的这次落库不该把创建时记下的文件名/照片/归属/起始态冲掉
                 filename = CASE WHEN excluded.filename != '' THEN excluded.filename ELSE cases.filename END,
                 photos = CASE WHEN excluded.photos != '[]' THEN excluded.photos ELSE cases.photos END,
                 accident_type = excluded.accident_type,
@@ -239,7 +261,8 @@ def upsert_case(
                 task_id,
                 case_id,
                 status,
-                "submitted",
+                flow_status,
+                owner_id,
                 input_text,
                 filename,
                 photos_json,
@@ -281,21 +304,31 @@ def _loads_list(raw: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
-def list_records(limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
+def list_records(
+    limit: int = 20, offset: int = 0, owner_id: str | None = None
+) -> list[dict[str, Any]]:
     """车主端「研判记录」：按提交时间倒序，含完整 result，一次拉全。
 
     和 list_cases 的区别是带 result_json：车主端要直接渲染历史结论，
     逐条再查一次详情就是 N+1 了。
+
+    `owner_id` 非空时只返回该车主名下的案件（B2 案件与车主绑定）；
+    为 None 时不过滤（匿名/演示场景，保持原行为）。
     """
-    rows = get_conn().execute(
-        """
-        SELECT task_id, case_id, status, flow_status, input_text, filename, photos, accident_type,
-               responsibility, split, confidence, priority, result_json, error,
+    sql = """
+        SELECT task_id, case_id, status, flow_status, owner_id, input_text, filename, photos,
+               accident_type, responsibility, split, confidence, priority, result_json, error,
                created_at, updated_at
-        FROM cases ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?
-        """,
-        (limit, offset),
-    ).fetchall()
+        FROM cases
+    """
+    params: list[Any] = []
+    if owner_id:
+        sql += " WHERE owner_id = ?"
+        params.append(owner_id)
+    sql += " ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?"
+    params += [limit, offset]
+
+    rows = get_conn().execute(sql, tuple(params)).fetchall()
     out: list[dict[str, Any]] = []
     for row in rows:
         data = dict(row)
@@ -321,7 +354,7 @@ def get_case(task_id: str) -> Optional[dict[str, Any]]:
 # ---------------- 案件双端联动（D12：状态流转 / 交警下发 / 车主查看） ----------------
 
 def insert_timeline(task_id: str, kind: str, title: str, content: str = "") -> None:
-    """写一条案件时间线事件（status 流转 / 交警消息 / 下发处分）。"""
+    """写一条案件时间线事件（status 流转 / 交警消息 / 下发处分 / 自动取证 / 车主回执）。"""
     conn = get_conn()
     with _lock:
         conn.execute(
@@ -332,13 +365,46 @@ def insert_timeline(task_id: str, kind: str, title: str, content: str = "") -> N
 
 
 def list_timeline(task_id: str) -> list[dict[str, Any]]:
-    """某案件的时间线（按时间正序返回，前端展示流转过程）。"""
+    """某案件的时间线（按时间正序返回，前端展示流转过程）。
+
+    `acked_at` 非空的 message/disposition 表示车主已回执（B3）。
+    """
     rows = get_conn().execute(
-        "SELECT id, task_id, kind, title, content, created_at FROM case_timeline "
+        "SELECT id, task_id, kind, title, content, acked_at, created_at FROM case_timeline "
         "WHERE task_id = ? ORDER BY id ASC",
         (task_id,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+# 需要车主回执的事件类型：交警下发的消息与处理意见
+_ACK_KINDS = ("message", "disposition")
+
+
+def pending_ack_count(task_id: str) -> int:
+    """该案件尚未被车主回执的交警下发条数。"""
+    row = get_conn().execute(
+        "SELECT COUNT(*) AS c FROM case_timeline "
+        "WHERE task_id = ? AND kind IN (?, ?) AND acked_at IS NULL",
+        (task_id, *_ACK_KINDS),
+    ).fetchone()
+    return int(row["c"]) if row else 0
+
+
+def ack_case_messages(task_id: str) -> int:
+    """车主回执：把该案件尚未回执的交警下发标记为已接收，返回本次回执条数。
+
+    幂等：已回执的不会被覆盖（`acked_at IS NULL` 条件），重复回执返回 0。
+    """
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute(
+            "UPDATE case_timeline SET acked_at = ? "
+            "WHERE task_id = ? AND kind IN (?, ?) AND acked_at IS NULL",
+            (_now(), task_id, *_ACK_KINDS),
+        )
+        conn.commit()
+        return cur.rowcount
 
 
 def get_flow_status(task_id: str) -> str:
@@ -349,6 +415,21 @@ def get_flow_status(task_id: str) -> str:
     if not row or not row["flow_status"]:
         return "submitted"
     return row["flow_status"]
+
+
+def get_case_owner(task_id: str) -> str:
+    """读案件绑定车主（B2）；未绑定/查不到返回空串。"""
+    row = get_conn().execute(
+        "SELECT owner_id FROM cases WHERE task_id = ?", (task_id,)
+    ).fetchone()
+    if not row or not row["owner_id"]:
+        return ""
+    return row["owner_id"]
+
+
+def needs_pre_review_advance(task_id: str) -> bool:
+    """研判完成时该案件是否还停在"未受理"的起始态（可自动推进到待交警受理）。"""
+    return get_flow_status(task_id) in _PRE_REVIEW_FLOWS
 
 
 def set_case_flow_status(

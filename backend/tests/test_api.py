@@ -110,10 +110,21 @@ def test_police_routes_reject_anonymous(client):
     assert client.get("/api/cases").status_code == 401
 
 
-def test_police_routes_reject_owner_role(client):
+def test_police_reads_open_to_owner_but_writes_rejected(client):
+    """交警端**读取**对任意登录用户开放（车主端要能看流转与下发内容），
+    但**写操作**仍限 police 角色 —— police.py 的既有口径。
+
+    注：本条此前断言车主读列表得 403，与 police.py 已放宽的口径矛盾（旧用例未同步）。
+    """
     client.post("/api/auth/register", json={"username": "driver", "password": "secret123", "role": "owner"})
     token = client.post("/api/auth/login", json={"username": "driver", "password": "secret123"}).json()["data"]["access_token"]
-    resp = client.get("/api/cases", headers={"Authorization": f"Bearer {token}"})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    assert client.get("/api/cases", headers=headers).status_code == 200
+    # 写操作（下发消息）仍须交警角色
+    resp = client.post(
+        "/api/cases/driver-case/police/message", json={"content": "hi"}, headers=headers
+    )
     assert resp.status_code == 403
 
 

@@ -1,6 +1,6 @@
 # API.md · 后端接口契约（Day1 起 P2 主导 / 持续维护）
 
-> 版本：v0.3（2026-10-05，D1–D11 完成态，与 `backend/app/**` 实现一致）
+> 版本：v0.4（2026-10-09，新增 B1–B4：自动取证 / 双端推送 / 车主回执 / 状态机扩展，与 `backend/app/**` 实现一致）
 > 语言：REST + WebSocket。Base URL：`http://localhost:8000`。
 > 全链路默认走 mock（`use_mock=True`），无需真实凭据即可跑通；配置 `.env` 后自动接真实 MoMA 网关。
 
@@ -20,7 +20,8 @@
 
 错误码：`VALIDATION_ERROR`(422) / `EMPTY_INPUT`(422) / `USER_EXISTS`(409) /
 `BAD_CREDENTIALS`(401) / `UNAUTHORIZED`(401) / `FORBIDDEN`(403) /
-`TASK_NOT_FOUND`(404) / `CASE_NOT_FOUND`(404) / `TASK_PROCESSING`(202) / `INTERNAL_ERROR`(500)。
+`TASK_NOT_FOUND`(404) / `CASE_NOT_FOUND`(404) / `NOT_DISPENSED`(422) /
+`TASK_PROCESSING`(202) / `INTERNAL_ERROR`(500)。
 
 ## 1. 鉴权（D7）
 
@@ -87,6 +88,27 @@
 > `POST /api/videos`（仅视频）与 `POST /api/cases`（JSON，文字/已有媒体）保留不变，
 > 分别供简单上传与带 `video_id` 的调用方使用。
 
+## 2.2 行车记录仪自动取证入口（B1）
+
+`POST /api/cases/forensics` — **202**（`multipart/form-data`）
+
+事故发生时由**设备自动触发**（替代车主手动上传）：上传滚动录像 + 触发时刻，
+后端按触发点回退 `pre_seconds` 秒截出"事发前画面"片段，只把这段证据送进研判链路。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `video` | file，**必填** | 行车记录仪滚动录像（mp4/mov/avi/mkv，≤ `max_upload_mb`） |
+| `trigger_seconds` | number，可选 | 事故触发时刻（视频内秒数）；缺省视为"刚发生"，取录像末尾 |
+| `pre_seconds` | number，可选 | 事发前回看秒数，默认 `30`（0–300） |
+| `post_seconds` | number，可选 | 事后保留秒数，默认 `5`（0–300） |
+| `device_id` | text，可选 | 设备编号，写入取证时间线便于溯源 |
+| `description` / `photos` | 可选 | 同 §2.1，照片走单帧检测补充证据 |
+
+- 起始业务状态为 `forensics`（自动取证中，见 §6.1）；研判完成后自动推进到 `pending_review`。
+- 截取失败（视频不可解码等）**不报错**：降级为使用原视频继续研判，并在时间线说明原因。
+- 取证过程写入案件时间线（`kind="forensics"`），车主端与交警端都能看到取了哪一段。
+- 返回结构与 `POST /api/cases` 相同（TaskInfo）。
+
 ## 3. 任务状态查询（D2）
 
 `GET /api/tasks/{task_id}/status`
@@ -104,8 +126,9 @@
 
 - 记录落在后端 SQLite（创建与完成时各写一次），**换浏览器、换设备看到的是同一份**，
   前端不再依赖 localStorage。
-- 不鉴权：`POST /api/videos` 本身就允许匿名提交，车主端也没有账号概念；
-  等记录要按账号归属时再加 owner 过滤。
+- 不强制鉴权，但支持**可选令牌归属过滤**（B2）：带 `Authorization: Bearer <JWT>` 且为
+  `owner` 角色时只返回本人名下案件；交警或匿名（无令牌）返回全部记录 —— 与 `POST /api/submissions`
+  允许匿名提交保持一致，同时满足车主端"只看自己的车"。
 - `status` 非终态但后端内存里已无该任务（进程重启留下的半截任务）→ 返回
   `failed` + `error`「后端重启，该次分析已中断」，避免前端一直转圈。
 - 列表项**带完整 `result`**（车主端直接渲染历史结论，不必逐条再查详情）。
@@ -169,6 +192,28 @@
 - 任务不存在时推送 `{"type":"error","status":"not_found"}` 并以 `4404` 关闭。
 - 失败任务推送 `{"type":"failed","error":"..."}`。
 
+## 5.1 双端案件事件流（B2）
+
+`WS /api/ws/notifications?token=<JWT>` — 全局案件事件流（与 §5 的**单任务**进度流不同）。
+
+- 连接时用 query 参数 `token` 鉴权（浏览器 WebSocket 无法自定义 Header）；令牌缺失/无效
+  按**匿名**处理：保持连接但不接收任何事件。
+- 可见性：**交警**令牌收到全部案件；**车主**令牌只收 `owner_id` 与本人账号一致的事件；
+  匿名不接收 —— 保证"案件与车主绑定"后互不串台。
+- 案件**创建**（落库）与研判**完成/失败**时各推一次，供车主端与交警端**同时刷新**，无需轮询：
+
+```json
+{ "type": "case_created", "task_id": "adf72a071510", "owner_id": "driver01",
+  "status": "pending", "flow_status": "forensics", "filename": "", "input_text": "" }
+{ "type": "case_done",    "task_id": "adf72a071510", "owner_id": "driver01",
+  "status": "done",    "flow_status": "pending_review", "result": { "...": "同 §4" } }
+{ "type": "case_failed",  "task_id": "adf72a071510", "owner_id": "driver01",
+  "status": "failed",  "flow_status": "pending_review", "error": "研判超时" }
+```
+
+> 进程内内存总线（`app/api/notifications.py` 的 `EventHub`），单机演示足够；
+> 多实例部署需换成 Redis 之类的共享总线。
+
 ## 6. 交警端（D7，需 police 角色）
 
 | 方法 | 路径 | 说明 |
@@ -176,6 +221,37 @@
 | GET | `/api/cases?limit=20&offset=0` | 案件列表（摘要，按创建时间倒序） |
 | GET | `/api/cases/{task_id}` | 案件详情（含完整 result） |
 | GET | `/api/cases/{task_id}/draft` | 《道路交通事故认定书（草稿）》纯文本，带 `Content-Disposition` |
+| GET | `/api/cases/{task_id}/interact` | 双端联动视图：`flow_status`/`flow_label` + 时间线 + `pending_ack`（待回执条数） |
+| POST | `/api/cases/{task_id}/interact/ack` | 车主回执（B3）：标记下发内容已接收并推进 `dispensed → received`，幂等、**不鉴权** |
+| POST | `/api/cases/{task_id}/police/message` | 交警下发消息 → 时间线 `kind="message"` |
+| POST | `/api/cases/{task_id}/police/disposition` | 交警下发处理意见（处分）→ 时间线 `kind="disposition"`，状态推进到 `dispensed` |
+| POST | `/api/cases/{task_id}/police/flow` | 交警推进流转：`accept→reviewing` / `approve→decided` / `reject→rejected` / `close→closed` |
+
+> 读取类接口对任意登录用户开放（车主端要能看流转与下发内容），**写操作**仍限 police 角色（否则 403）。
+
+## 6.1 双端联动与案件状态机（B2/B3/B4）
+
+交警确认并向车主下发后，车主端通过 `GET .../interact` 看到时间线、通过 `POST .../ack` 回执：
+
+```json
+{ "code": 0, "msg": "ok",
+  "data": { "acked": 1, "pending_ack": 0, "flow_status": "received", "flow_label": "车主已接收并回执" } }
+```
+
+- 状态未到 `dispensed`（交警尚未下发）时回执返回 **422** `NOT_DISPENSED`「交警尚未下发处理意见，暂无可回执内容」。
+- 重复回执**不报错**、条数不再增加（前置条件检查 + 幂等 UPDATE，`acked` 第二次为 0）。
+
+业务状态机 `flow_status`（与 §3 的分析状态 `status` 分离，二者各自演进）：
+
+```
+forensics（自动取证） → analyzing（AI 研判） → pending_review（待交警受理）
+      → reviewing（审核中） → decided（责任已认定） → dispensed（已下发处理意见）
+      → received（车主已接收并回执） → closed（已结案）
+```
+
+- 起始态：手动提交为 `submitted`，行车记录仪自动取证（§2.2）为 `forensics`；研判完成后
+  统一收敛到 `pending_review`（`submitted` / `forensics` / `analyzing` 三态都会自动推进）。
+- `rejected`（已驳回，待补充材料）为审核分支终态，可再流转回 `reviewing`。
 
 ## 7. 运维（D8）
 
