@@ -5,9 +5,11 @@ Gradio 界面（豆包风格交互）—— 后端 8000 直接托管的主界面
 - 车主端（统一对话）：一个 multimodal 对话框承载三种传输方式 ——
   纯文字 → 对话问答；传视频 → 五节点研判；传图片 → 照片证据研判；
   研判结果作为对话回复进入上下文，可继续追问
-- 交警端：登录（统一在右上角设置里） → 案件列表 → 案件详情 → 认定书草稿导出
+- 电话对答：接通红色电话键后直接说话（浏览器端连续录音 + 音量分句，
+  停顿即自动转写发送），回复语音播报，播报期间暂停采集避免录到回声
+- 交警端：登录（统一在设置面板里） → 案件列表 → 案件详情 → 认定书草稿导出
 - 标题下方：模型管理（运行时切换大模型，走 /api/config/llm）
-- 右上角：设置（统一登录入口 / 退出登录 / 主题切换）
+- 模型管理与对话框之间（靠右）：语音播报开关与设置（登录入口 / 退出 / 主题切换）
 """
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ import requests
 from app.core.config import settings
 from app.core.db import load_chat_history, save_chat_message
 from app.services.rag import rag_service
+from app.services.tts import synthesize
 
 # 后端 API 地址：UI 与 API 同进程挂载时默认自调 8000；
 # 若服务换了端口，用环境变量 ROADMIND_API_BASE 覆盖，避免回调打到别的服务上
@@ -31,30 +34,18 @@ _CUSTOM_CSS = """
 .hero-center h1 { font-size: 40px; font-weight: 800; color: #1f2329; margin: 0 0 2px; }
 .hero-center p { color: #6b7280; font-size: 16px; margin: 0; }
 .gradio-container { position: relative; background: #f7f8fa; }
-/* 右上角：⚙️ 图标按钮 + 点开后的设置面板（绝对定位，浮在内容上方） */
+/* 模型管理与对话框之间（靠右）：语音播报 🔊 / 设置 ⚙️ 图标行 + 点开后的设置面板 */
 .top-right {
-    position: absolute; top: 10px; right: 14px; z-index: 300;
-    width: 240px !important; max-width: calc(100vw - 28px); min-width: 0 !important;
-    gap: 4px !important;
+    display: flex; flex-direction: column; align-items: flex-end;
+    width: auto !important; max-width: 100%; min-width: 0 !important;
+    gap: 6px !important;
+    margin: 2px 4px 10px;
     background: transparent;
-    /* 容器透明区域不拦截下方 Tabs 的点击，只有内部组件本身响应 */
-    pointer-events: none;
-    align-items: flex-end;
 }
-.top-right * { pointer-events: auto; }
-/* 齿轮图标按钮：圆形小图标，收起时右上角只有它 */
-.gear-btn {
-    align-self: flex-end;
-    width: 36px !important; min-width: 36px !important;
-    padding: 4px !important; font-size: 17px !important; line-height: 1 !important;
-    border-radius: 50% !important;
-    background: #ffffff !important; border: 1px solid #e5e7eb !important;
-    box-shadow: 0 1px 6px rgba(15, 23, 42, .08);
-}
-.gear-btn:hover { border-color: #4d6bfe !important; }
-/* 设置面板：白色卡片 */
+/* 设置面板：白色卡片，展开时显示在图标行下方（靠右、定宽不撑满） */
 .settings-panel {
-    background: #ffffff !important;
+    width: 320px;
+    max-width: 100%;
     border: 1px solid #e5e7eb !important;
     border-radius: 10px !important;
     box-shadow: 0 2px 16px rgba(15, 23, 42, .12);
@@ -68,13 +59,20 @@ _CUSTOM_CSS = """
 .settings-panel button { font-size: 12px !important; padding: 4px 8px !important; min-height: 0 !important; }
 .settings-panel label span { font-size: 11px !important; }
 .settings-panel p { font-size: 12px !important; }
+/* 齿轮图标按钮：圆形小图标，与 🔊 并排靠右 */
+.gear-btn {
+    width: 32px !important; min-width: 32px !important; max-width: 32px !important;
+    height: 32px !important;
+    flex-grow: 0 !important;
+    padding: 0 !important; font-size: 16px !important; line-height: 1 !important;
+    border-radius: 50% !important;
+    background: #ffffff !important; border: 1px solid #e5e7eb !important;
+    box-shadow: 0 1px 6px rgba(15, 23, 42, .08);
+}
+.gear-btn:hover { border-color: #4d6bfe !important; }
 /* Gradio 的进度追踪容器隐藏态仍会拦截点击，禁掉它的指针事件 */
 [data-testid="status-tracker"] { pointer-events: none !important; }
 .status-badge { font-size: 12px; color: #6b7280; padding: 2px 6px; }
-/* 窄屏时浮层回归文档流，避免盖住标题 */
-@media (max-width: 640px) {
-    .top-right { position: static; width: auto !important; margin: 0 8px 8px; }
-}
 /* 隐藏底部 "Built with Gradio" 水印与页脚 */
 footer, .built-with-gradio, [data-testid="footer"], .gradio-footer,
 div:has(> .built-with-gradio), contentinfo { display: none !important; }
@@ -89,6 +87,255 @@ footer { visibility: hidden !important; height: 0 !important; padding: 0 !import
     font-size: 13px !important;
 }
 .quick-asks button:hover { border-color: #4d6bfe !important; color: #4d6bfe !important; }
+/* 图标行（语音播报开关 + 设置）：收缩到图标宽度并靠右（父容器 align-items: flex-end） */
+.corner-row {
+    align-items: center; gap: 6px; margin: 0; justify-content: flex-end;
+    width: fit-content !important; flex-grow: 0 !important;
+    background: transparent; border: none; box-shadow: none;
+}
+.voice-corner-btn {
+    width: 40px !important; min-width: 40px !important; max-width: 40px !important;
+    height: 32px !important; line-height: 1 !important;
+    border-radius: 50% !important; padding: 0 !important;
+    background: #ffffff !important; border: 1px solid #e5e7eb !important;
+    box-shadow: 0 1px 6px rgba(15, 23, 42, .08);
+}
+.voice-corner-btn:hover { border-color: #4d6bfe !important; }
+/* 输入区（改进版）：整行一条输入栏 —— 左语音输入键 + 中输入框 + 右电话键 */
+.input-row {
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0 0;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    padding: 8px 12px;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, .05);
+}
+/* 输入条内 Gradio 组件自带的底色与边框透明化，视觉上合成一条微信式输入栏 */
+.input-row .block, .input-row .form, .input-row .component-wrapper {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}
+/* 语音输入键（按住说话）：青绿色圆钮，按下时变色 */
+.voice-input-btn {
+    border-radius: 50% !important;
+    width: 48px !important; min-width: 48px !important; max-width: 48px !important;
+    height: 44px !important;
+    font-size: 22px !important;
+    margin-bottom: 0;
+    background: linear-gradient(135deg, #2dd4bf 0%, #14b8a6 100%) !important;
+    border: 1px solid #0d9488 !important;
+    box-shadow: 0 2px 8px rgba(45, 212, 191, .25) !important;
+    transition: transform .15s, box-shadow .2s, background .2s !important;
+}
+.voice-input-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(45, 212, 191, .35) !important;
+}
+.voice-input-btn:active, .voice-input-btn.recording,
+.voice-input-btn button.recording {
+    background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%) !important;
+    transform: scale(.95);
+}
+/* 红色电话键：接通语音对话（像打电话），与输入条同高内联 */
+.call-btn-red {
+    border-radius: 50% !important;
+    width: 52px !important; min-width: 52px !important; max-width: 52px !important;
+    height: 44px !important;
+    font-size: 22px !important;
+    margin-bottom: 0;
+}
+.call-btn-red:hover { transform: scale(1.06); }
+/* 通话/播报状态行 */
+.call-row { align-items: center; gap: 10px; margin: 4px 0; }
+.call-status { margin: 0 !important; font-size: 13px; color: #374151; }
+.call-status p { margin: 0; }
+.voice-row .reply-audio { max-height: 52px; }
+/* 通话视图：清澈青色海水背景 + 青黑虎鲸（js 渲染，默认隐藏） */
+#rm-call-view {
+    display: none; align-items: center; justify-content: center;
+    gap: 20px; padding: 18px 14px 12px; margin: 6px 0;
+    background: linear-gradient(180deg, #cffafe 0%, #a5f3fc 30%, #67e8f9 100%);
+    border: 1px solid #a5f3fc;
+    border-radius: 16px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 4px 20px rgba(103, 232, 249, .25);
+}
+#rm-call-view.on { display: flex; }
+.rm-avatar { position: relative; width: 120px; height: 100px; flex: 0 0 auto; }
+.rm-ring {
+    position: absolute; inset: -7px; border-radius: 50%;
+    border: 3px solid rgba(13, 148, 136, .45);
+    animation: rm-pulse 1.6s ease-out infinite;
+}
+.rm-orca {
+    width: 100%; height: 100%; display: block; overflow: visible;
+    filter: drop-shadow(0 9px 14px rgba(15, 23, 42, .2));
+}
+/* 虎鲸部件（SVG，正面朝向用户）：青黑可爱风格 - 圆滚滚身体、蓝色大眼睛、甜美微笑 */
+.rm-fin { transform-box: fill-box; transform-origin: center; }
+/* 尾巴：从身体右后伸出的弯翘尾鳍，根部藏在身体下，随状态摆动 */
+.rm-tail { transform-box: fill-box; transform-origin: left center; }
+.rm-avatar.listen .rm-tail { animation: rm-swim 2.6s ease-in-out infinite; }
+.rm-avatar.speak .rm-tail { animation: rm-swim 1.2s ease-in-out infinite; }
+@keyframes rm-swim {
+    0%, 100% { transform: rotate(-6deg); }
+    50% { transform: rotate(8deg); }
+}
+/* 背鳍：高大弯翘镰刀形（微微侧身从背部伸出），根部藏在身体下，说话时微摆 */
+.rm-dorsal { transform-box: fill-box; transform-origin: bottom center; }
+.rm-avatar.speak .rm-dorsal { animation: rm-fin-move 1.6s ease-in-out infinite; }
+.rm-eye {
+    transform-box: fill-box; transform-origin: center;
+    animation: rm-blink 3s infinite;
+}
+.rm-mouth {
+    transform-box: fill-box; transform-origin: center;
+    transition: transform .12s;
+}
+.rm-bub { transform-box: fill-box; fill: rgba(255, 255, 255, .8); opacity: 0; }
+.rm-blush { transition: opacity .25s; }
+/* 听：整体浮游、鳍缓划、气泡缓升、外圈脉冲呼吸 */
+.rm-avatar.listen .rm-orca { animation: rm-float 3s ease-in-out infinite; }
+.rm-avatar.listen .rm-fin { animation: rm-fin-move 2.5s ease-in-out infinite; }
+.rm-avatar.listen .rm-bub { animation: rm-rise 3s ease-in infinite; }
+.rm-bub.b2 { animation-delay: 0.8s; }
+.rm-bub.b3 { animation-delay: 1.4s; }
+.rm-bub.b4 { animation-delay: 1s; }
+.rm-bub.b5 { animation-delay: 1.7s; }
+.rm-bub.b6 { animation-delay: 2s; }
+/* 说：嘴开合（播报中）、鳍欢快挥动、气泡欢快 */
+.rm-avatar.speak .rm-orca { animation: rm-float 1.8s ease-in-out infinite; }
+.rm-avatar.speak .rm-fin { animation: rm-fin-move 1.2s ease-in-out infinite; }
+.rm-avatar.speak .rm-mouth { animation: rm-talk .4s ease-in-out infinite alternate; }
+.rm-avatar.speak .rm-bub { animation: rm-rise 1.7s ease-in infinite; }
+.rm-avatar.speak .rm-blush { opacity: .7; }
+/* 思考：眼闪、身体小幅晃动（识别与生成中） */
+.rm-avatar.think .rm-orca { animation: rm-float 1.3s ease-in-out infinite; }
+.rm-avatar.think .rm-eye { animation: rm-think 0.8s infinite; }
+.rm-avatar.think .rm-bub { animation-duration: 4s; }
+@keyframes rm-pulse {
+    0% { transform: scale(.92); opacity: .85; }
+    75% { transform: scale(1.12); opacity: .1; }
+    100% { transform: scale(.92); opacity: .85; }
+}
+@keyframes rm-blink { 0%, 92%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.08); } }
+@keyframes rm-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes rm-fin-move { 0%, 100% { transform: rotate(-5deg); } 50% { transform: rotate(8deg); } }
+@keyframes rm-talk { from { transform: scaleY(.35); } to { transform: scaleY(1.5); } }
+@keyframes rm-think { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+@keyframes rm-rise {
+    0% { opacity: 0; transform: translateY(8px) scale(.5); }
+    25% { opacity: .8; }
+    100% { opacity: 0; transform: translateY(-22px) scale(1.2); }
+}
+.rm-mouth {
+    transform-box: fill-box; transform-origin: center;
+    transition: transform .12s;
+}
+.rm-bub { transform-box: fill-box; fill: rgba(255, 255, 255, .65); opacity: 0; }
+.rm-blush { transition: opacity .25s; }
+/* 听：整体浮游、双鳍缓划、气泡缓升、外圈脉冲呼吸 */
+.rm-avatar.listen .rm-orca { animation: rm-float 3s ease-in-out infinite; }
+.rm-avatar.listen .rm-fin.fl { animation: rm-finl 2.6s ease-in-out infinite; }
+.rm-avatar.listen .rm-fin.fr { animation: rm-finr 2.6s ease-in-out infinite; }
+.rm-avatar.listen .rm-bub { animation: rm-rise 3.2s ease-in infinite; }
+.rm-bub.b2 { animation-delay: 1s; }
+.rm-bub.b3 { animation-delay: 1.9s; }
+/* 说：嘴开合（播报中）、双鳍欢快挥动、气泡加速 */
+.rm-avatar.speak .rm-orca { animation: rm-float 2s ease-in-out infinite; }
+.rm-avatar.speak .rm-fin.fl { animation: rm-finl 1.1s ease-in-out infinite; }
+.rm-avatar.speak .rm-fin.fr { animation: rm-finr 1.1s ease-in-out infinite; }
+.rm-avatar.speak .rm-mouth { animation: rm-talk .45s ease-in-out infinite alternate; }
+.rm-avatar.speak .rm-bub { animation: rm-rise 1.8s ease-in infinite; }
+.rm-avatar.speak .rm-blush { opacity: .8; }
+/* 思考：眼闪、身体小幅晃动（识别与生成中） */
+.rm-avatar.think .rm-orca { animation: rm-float 1.3s ease-in-out infinite; }
+.rm-avatar.think .rm-eye { animation: rm-think 1s infinite; }
+.rm-avatar.think .rm-bub { animation-duration: 4.5s; }
+@keyframes rm-pulse {
+    0% { transform: scale(.96); opacity: .9; }
+    70% { transform: scale(1.1); opacity: .15; }
+    100% { transform: scale(.96); opacity: .9; }
+}
+@keyframes rm-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.15); } }
+@keyframes rm-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+@keyframes rm-finl { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(10deg); } }
+@keyframes rm-finr { 0%, 100% { transform: rotate(4deg); } 50% { transform: rotate(-10deg); } }
+@keyframes rm-talk { from { transform: scaleY(.3); } to { transform: scaleY(1.6); } }
+@keyframes rm-think { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+@keyframes rm-rise {
+    0% { opacity: 0; transform: translateY(8px) scale(.7); }
+    20% { opacity: .85; }
+    100% { opacity: 0; transform: translateY(-20px) scale(1.15); }
+}
+.rm-orca {
+    width: 100%; height: 100%; display: block; overflow: visible;
+    filter: drop-shadow(0 9px 14px rgba(15, 23, 42, .2));
+}
+/* 虎鲸部件（SVG）：可爱虎鲸风格 - 黑亮身体、白色腹部、蓝色大眼睛、粉色腮红 */
+.rm-fin { transform-box: fill-box; transform-origin: center; }
+.rm-eye {
+    transform-box: fill-box; transform-origin: center;
+    animation: rm-blink 3.4s infinite;
+}
+.rm-mouth {
+    transform-box: fill-box; transform-origin: center;
+    transition: transform .15s;
+}
+.rm-bub { transform-box: fill-box; fill: rgba(255, 255, 255, .7); opacity: 0; }
+.rm-blush { transition: opacity .3s; }
+/* 听：整体浮游、鳍缓划、气泡缓升、外圈脉冲呼吸 */
+.rm-avatar.listen .rm-orca { animation: rm-float 3.5s ease-in-out infinite; }
+.rm-avatar.listen .rm-fin { animation: rm-fin-move 2.8s ease-in-out infinite; }
+.rm-avatar.listen .rm-bub { animation: rm-rise 3.5s ease-in infinite; }
+.rm-bub.b2 { animation-delay: 0.8s; }
+.rm-bub.b3 { animation-delay: 1.6s; }
+.rm-bub.b4 { animation-delay: 1.2s; }
+.rm-bub.b5 { animation-delay: 2s; }
+/* 说：嘴开合（播报中）、鳍欢快挥动、气泡欢快 */
+.rm-avatar.speak .rm-orca { animation: rm-float 2.2s ease-in-out infinite; }
+.rm-avatar.speak .rm-fin { animation: rm-fin-move 1.4s ease-in-out infinite; }
+.rm-avatar.speak .rm-mouth { animation: rm-talk .4s ease-in-out infinite alternate; }
+.rm-avatar.speak .rm-bub { animation: rm-rise 2s ease-in infinite; }
+.rm-avatar.speak .rm-blush { opacity: .6; }
+/* 思考：眼闪、身体小幅晃动（识别与生成中） */
+.rm-avatar.think .rm-orca { animation: rm-float 1.5s ease-in-out infinite; }
+.rm-avatar.think .rm-eye { animation: rm-think 0.8s infinite; }
+.rm-avatar.think .rm-bub { animation-duration: 4s; }
+@keyframes rm-pulse {
+    0% { transform: scale(.95); opacity: .85; }
+    70% { transform: scale(1.08); opacity: .12; }
+    100% { transform: scale(.95); opacity: .85; }
+}
+@keyframes rm-blink { 0%, 94%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.08); } }
+@keyframes rm-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes rm-fin-move { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(7deg); } }
+@keyframes rm-talk { from { transform: scaleY(.35); } to { transform: scaleY(1.5); } }
+@keyframes rm-think { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+@keyframes rm-rise {
+    0% { opacity: 0; transform: translateY(8px) scale(.5); }
+    25% { opacity: .6; }
+    100% { opacity: 0; transform: translateY(-22px) scale(1.1); }
+}
+@keyframes rm-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.1); } }
+@keyframes rm-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+@keyframes rm-fin-move { 0%, 100% { transform: rotate(-5deg); } 50% { transform: rotate(8deg); } }
+@keyframes rm-talk { from { transform: scaleY(.4); } to { transform: scaleY(1.4); } }
+@keyframes rm-think { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+@keyframes rm-rise {
+    0% { opacity: 0; transform: translateY(10px) scale(.6); }
+    20% { opacity: .7; }
+    100% { opacity: 0; transform: translateY(-25px) scale(1.2); }
+}
+/* 声音频率动态：实时频谱条（js 每帧绘制麦克风输入，青绿发光） */
+#rm-wave {
+    border-radius: 12px;
+    background: linear-gradient(180deg, #ffffff, #e8f8f2);
+    box-shadow: inset 0 0 0 1px #b8e8d0, 0 2px 8px rgba(13, 100, 90, .08);
+}
 """
 
 PARTY_LABEL = {
@@ -219,8 +466,12 @@ def add_model(model_id: str):
         return (load_models(), f"❌ 服务不可用：{e}")
 
 
-def chat_fn(message, history) -> str:
-    """统一入口：纯文字 → 对话；带视频/图片 → 研判（结果作为回复进上下文）。"""
+def chat_fn(message, history, short: bool = False) -> str:
+    """统一入口：纯文字 → 对话；带视频/图片 → 研判（结果作为回复进上下文）。
+
+    short=True 是语音对话模式：后端限短回复（60 字内口语短句），
+    压低转写后的 LLM 生成与 TTS 合成时间，语音来回才勉强跟得上。
+    """
     if isinstance(message, dict):
         text = (message.get("text") or "").strip()
         files = message.get("files") or []
@@ -232,6 +483,14 @@ def chat_fn(message, history) -> str:
     photos = [f for f in files if f.lower().endswith(_PHOTO_EXTS)]
 
     if video or photos:
+        if short:
+            # 语音助手模型不支持图片输入：仿照网关的告知设计 ——
+            # 文件名 + 原因 + 引导，明确告诉用户而不是静默忽略或回显英文报错
+            names = "、".join(
+                os.path.basename(f) for f in ([video] if video else photos)
+            )
+            return (f'📷 无法读取 "{names}"（语音助手不支持图片输入）'
+                    "——请挂断电话后，用文字模式上传图片/视频进行研判")
         return _run_submission(text, video, photos)
 
     # 纯文字 → 多轮对话
@@ -247,7 +506,8 @@ def chat_fn(message, history) -> str:
     if not messages:
         return "请输入问题，或上传视频/图片进行研判"
     try:
-        r = requests.post(f"{API}/api/chat", json={"messages": messages}, timeout=200)
+        r = requests.post(f"{API}/api/chat",
+                          json={"messages": messages, "short": short}, timeout=200)
         r.raise_for_status()
         return r.json()["data"]["reply"]
     except Exception as e:  # noqa: BLE001
@@ -539,7 +799,7 @@ def build_demo() -> gr.Blocks:
             gr.HTML("<h1>📷 云智达</h1>"
                     "<p>RoadMind 事故研判助手</p>")
 
-        # ---------- 标题下方：模型管理（与右上角设置分开，占满全宽） ----------
+        # ---------- 标题下方：模型管理（与设置图标行分开，占满全宽） ----------
         model_status = gr.Markdown(_status_text(), elem_classes="status-badge")
 
         def _accordion_label() -> str:
@@ -592,13 +852,19 @@ def build_demo() -> gr.Blocks:
             timer.tick(_refresh_all, None, [model_status, current_md, model_acc])
             demo.load(_refresh_all, None, [model_status, current_md, model_acc])
 
-        # ---------- 右上角：一个 ⚙️ 图标按钮，点开才显示设置面板 ----------
-        # 收起时右上角只有一个小图标；账号 / 登录 / 退出 / 主题都收进面板。
+        # ---------- 模型管理与对话框之间（靠右）：语音播报 + 设置图标行 ----------
+        # 收起时只有 🔊 / ⚙️ 两个小图标靠右；账号 / 登录 / 退出 / 主题都收进
+        # 图标行下方的设置面板。
         # 「进页面先弹登录」用 demo.load 自动展开面板（Gradio 6.29 的 Group
         # 初始 visible=True 在嵌套布局里不渲染，但 gr.update(visible=True) 可靠）
         with gr.Column(elem_classes="top-right"):
-            gear_btn = gr.Button("⚙️", size="sm", elem_classes="gear-btn")
+            with gr.Row(elem_classes="corner-row"):
+                # 语音播报开关（只显示喇叭标识）：🔊 开 / 🔇 关
+                voice_btn = gr.Button("🔊", size="sm", elem_classes="voice-corner-btn")
+                gear_btn = gr.Button("⚙️", size="sm", elem_classes="gear-btn")
             panel_open = gr.State(False)
+            # 播报开关的 State（respond 里语音合成的开关）
+            voice_on = gr.State(True)
             with gr.Group(visible=False, elem_classes="settings-panel") as settings_panel:
                 account_md = gr.Markdown("**账号**：未登录")
                 with gr.Row():
@@ -613,6 +879,11 @@ def build_demo() -> gr.Blocks:
                 inputs=[panel_open],
                 outputs=[settings_panel, panel_open],
             )
+            voice_btn.click(
+                lambda on: (not on, gr.update(value="🔇" if on else "🔊")),
+                inputs=[voice_on],
+                outputs=[voice_on, voice_btn],
+            )
 
         # 全局共享登录态（设置界面的账号区与交警端共用）
         police_token = gr.State(None)
@@ -622,6 +893,9 @@ def build_demo() -> gr.Blocks:
         # 还没有上一句，对话就会"失忆"。respond 先把用户消息写进 State 再调
         # LLM，下一句 join 时快照到的 State 已含上一句，前后句才能被整合。
         chat_state = gr.State([])
+        # 电话式语音对话的通话状态：接通后浏览器端连续录音 + 音量分句，
+        # 停顿即自动转写发送；挂断后停止采集（js 在电话键的 click 事件里执行）
+        call_mode = gr.State(False)
         # 同设备记住登录：localStorage 存 token/账号，页面加载回填到隐藏框，
         # 触发 restore_login 校验后静默恢复登录态（一周内免重复登录）。
         # URL 带 token/user 参数（登录页 :8080 登录成功跳转过来）时优先采用：
@@ -650,19 +924,46 @@ def build_demo() -> gr.Blocks:
                     height=420, show_label=False,
                     avatar_images=("👤", "🤖"),
                 )
+                # 通话/播报状态行 + 回复语音播放器
+                with gr.Row(elem_classes="call-row"):
+                    call_status = gr.Markdown(
+                        "🎤 按住左侧说话键语音输入（松开发送） · "
+                        "📞 点右侧电话键进入连续语音对话",
+                        elem_classes="call-status", scale=1,
+                    )
+                    reply_audio = gr.Audio(
+                        autoplay=True, show_label=False, scale=0,
+                        elem_classes="reply-audio",
+                    )
+                # 通话视图：拨通后 js 在此渲染语音助手卡通形象 + 声音频率动态；
+                # 组件值恒定，js 只操作自己创建的子节点（不碰 Gradio 组件 DOM）
+                gr.HTML('<div id="rm-call-view"></div>', elem_classes="call-view")
                 # 快捷提问：对话界面与输入框之间，点击填入对话框
                 with gr.Row(elem_classes="quick-asks"):
                     quick_btns = [gr.Button(q, size="sm", scale=1) for q in _QUICK_ASKS]
-                msg_box = gr.MultimodalTextbox(
-                    file_types=["video", "image"],
-                    placeholder=(
-                        "输入问题对话；或点 📎 上传行车记录仪视频 / 现场照片 + "
-                        "补充描述进行研判"
-                    ),
-                    show_label=False,
-                    autoscroll=True,
-                    submit_btn="发送",
-                )
+                # 输入区（改进版）：左侧语音输入键（按住说话）+ 中输入框 + 右侧电话键（语音对话）
+                # 🎤 语音输入：按住说话，松开发送（语音转文字）
+                # 📞 语音对话：点击接通后进入实时对话模式，直接说话停顿即发送
+                with gr.Row(elem_classes="input-row"):
+                    voice_input_btn = gr.Button(
+                        "🎤", scale=0, min_width=52,
+                        elem_classes="voice-input-btn",
+                    )
+                    msg_box = gr.MultimodalTextbox(
+                        file_types=["video", "image"],
+                        placeholder=(
+                            "输入问题对话；或点 📎 上传行车记录仪视频 / "
+                            "现场照片 + 补充描述进行研判"
+                        ),
+                        show_label=False,
+                        autoscroll=True,
+                        submit_btn="发送",
+                        visible=True,
+                    )
+                    call_btn = gr.Button(
+                        "📞", variant="stop", scale=0, min_width=56,
+                        elem_classes="call-btn-red",
+                    )
 
                 def _user_bubble(message):
                     """用户输入 → chatbot 的 user 气泡（文件在前、文字在后）。"""
@@ -782,7 +1083,7 @@ def build_demo() -> gr.Blocks:
                         lines.append(j["note"])
                     return {"role": "assistant", "content": "\n".join(lines)}
 
-                def _poll_analysis(msgs, task_id: str, username: str):
+                def _poll_analysis(msgs, task_id: str, username: str, voice: bool):
                     """轮询任务：感知完成后关键帧片段先进对话，done 后补判定结论。
 
                     msgs 是全量会话消息（含本次 user 气泡与"已收到视频"），
@@ -813,14 +1114,14 @@ def build_demo() -> gr.Blocks:
                             if failures >= 3:
                                 _add_msg(msgs, username, {"role": "assistant",
                                        "content": f"❌ 服务不可用：{e}"})
-                                yield [*msgs], None, [*msgs]
+                                yield [*msgs], None, [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update()
                                 return
                             time.sleep(2)
                             continue
                         if r.status_code != 200:
                             _add_msg(msgs, username, {"role": "assistant",
                                        "content": "❌ 任务状态查询失败"})
-                            yield [*msgs], None, [*msgs]
+                            yield [*msgs], None, [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update()
                             return
                         info = r.json()
                         for kf in info.get("keyframes") or []:
@@ -828,33 +1129,66 @@ def build_demo() -> gr.Blocks:
                                 seen.add(kf)
                                 _add_msg(msgs, username, _kf_bubble(
                                     kf, "📷 视频感知关键帧 · 事故车辆识别框"))
-                                yield [*msgs], None, [*msgs]
+                                yield [*msgs], None, [*msgs], gr.update(), gr.update(), gr.update(), gr.update()
                         status = info.get("status")
                         if status == "done":
                             result = info.get("result") or {}
-                            _add_msg(msgs, username, _result_message(result))
-                            yield [*msgs], None, [*msgs]
+                            msg = _result_message(result)
+                            _add_msg(msgs, username, msg)
+                            # 检测到视频中有事故 → 像真人来电一样自动接通：
+                            # 语音播报研判结果、电话键变红色挂断、通话模式开启
+                            # （播完自动续录听车主说话）
+                            j = result.get("judgment") or {}
+                            acc = (j.get("accident_type") or "").strip()
+                            is_accident = acc not in ("", "unknown", "非事故")
+                            audio = _speak(msg.get("content", ""), voice)
+                            if is_accident:
+                                yield ([*msgs], gr.update(value=None), [*msgs],
+                                       gr.update(value=audio),
+                                       gr.update(value="📵"), True,
+                                       f"📞 检测到事故（{acc}），正在语音播报研判结果…")
+                            else:
+                                yield ([*msgs], gr.update(value=None), [*msgs],
+                                       gr.update(value=audio),
+                                       gr.update(), gr.update(), gr.update())
                             # 判定里无法确认的部分：主动向用户提问，
                             # 用户在对话框直接回复，助手结合研判上下文继续分析
+                            # （audio 位置 gr.update() 保持：刚设的播报不能被清掉）
                             questions = _confirm_questions(result.get("judgment") or {})
                             if questions:
                                 _add_msg(msgs, username,
                                          {"role": "assistant", "content": questions})
-                                yield [*msgs], None, [*msgs]
+                                yield [*msgs], None, [*msgs], gr.update(), gr.update(), gr.update(), gr.update()
                             return
                         if status == "failed":
                             _add_msg(msgs, username, {"role": "assistant", "content":
                                       f"❌ 分析失败：{info.get('error') or '未知原因'}"})
-                            yield [*msgs], None, [*msgs]
+                            yield [*msgs], None, [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update()
                             return
                         time.sleep(1.5)
 
-                def respond(message, history, username, chat_state):
+                def _speak(reply: str, on: bool):
+                    """语音播报：开关打开时把回复合成语音，返回 audio 组件值。
+
+                    合成失败/开关关闭时返回 None（audio 组件不动，对话不受影响）。
+                    """
+                    if not (on and reply):
+                        return None
+                    try:
+                        path = synthesize(reply)
+                        return str(path) if path else None
+                    except Exception:  # noqa: BLE001
+                        return None
+
+                def respond(message, history, username, chat_state, voice,
+                            call_mode: bool = False):
                     """统一对话入口（generator）：视频走研判并实时反馈关键帧片段，其余走对话。
 
                     全量会话消息用 chat_state 维护（chatbot 组件值只作首轮兜底）：
                     先把用户气泡写进 State 并 yield，再调 LLM —— 上一句还在等回复时
                     发下一句，Gradio join 快照到的 State 已含上一句，前后句不丢。
+                    纯文字回复到达后合成语音播报（🔊 开关控制），视频研判不朗读。
+                    call_mode=True 表示处于电话通话（语音分句发送），后端限短回复。
                     """
                     msgs = [*chat_state] if chat_state else [*history]
                     asked = ((message.get("text") or "").strip()
@@ -864,11 +1198,21 @@ def build_demo() -> gr.Blocks:
                         _add_msg(msgs, username, _user_bubble(message))
                         # "正在思考"占位只在对话区显示（不进 State、不落库）：
                         # LLM 返回后整列表替换成真回复，占位自然消失
-                        yield [*msgs,
-                               {"role": "assistant", "content": "🤔 正在思考…"}], gr.update(value=None), [*msgs]
-                        reply = chat_fn(message, _history_text(msgs))
+                        # call_btn/call_mode/call_status 一律 gr.update() 保持不变：
+                        # State 传 None 会被写成 None 值，下一轮 short=None
+                        # 触发 /api/chat 422（研判功能暂时不可用的根因）
+                        yield ([*msgs,
+                                {"role": "assistant", "content": "🤔 正在思考…"}],
+                               gr.update(value=None), [*msgs], gr.update(),
+                               gr.update(), gr.update(), gr.update())
+                        reply = chat_fn(message, _history_text(msgs), call_mode)
                         _add_msg(msgs, username, {"role": "assistant", "content": reply})
-                        yield [*msgs], gr.update(value=None), [*msgs]
+                        # 语音对话：回复先显示，语音合成后自动播放（合成阻塞几秒，
+                        # 放在回复 yield 之后，气泡先出、声音随后）；
+                        # gr.update(value=audio) 显式替换 —— 开关关闭/合成失败时
+                        # audio=None，显式清掉播放器里上一条 MP3，不残留
+                        audio = _speak(reply, voice)
+                        yield [*msgs], gr.update(value=None), [*msgs], gr.update(value=audio), gr.update(), gr.update(), gr.update()
                         return
                     # 视频研判分支：先落 user 气泡与"开始分析"，感知完成后
                     # 关键帧片段进对话，done 后再补判定结论（消息随账号落库）
@@ -876,18 +1220,461 @@ def build_demo() -> gr.Blocks:
                     _add_msg(msgs, username, {"role": "assistant", "content":
                              "📹 已收到视频，开始视频感知（YOLO 检测 + 轨迹追踪），"
                              "关键帧片段稍后反馈…"})
-                    yield [*msgs], gr.update(value=None), [*msgs]
+                    yield [*msgs], gr.update(value=None), [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update()
                     task_id = _submit_video_analysis(video, asked)
                     if not task_id:
                         _add_msg(msgs, username, {"role": "assistant",
                                  "content": "❌ 视频提交失败，请稍后重试"})
-                        yield [*msgs], gr.update(value=None), [*msgs]
+                        yield [*msgs], gr.update(value=None), [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update()
                         return
-                    yield from _poll_analysis(msgs, task_id, username)
+                    yield from _poll_analysis(msgs, task_id, username, voice)
 
                 msg_box.submit(respond,
-                               [msg_box, chatbot, police_username, chat_state],
-                               [chatbot, msg_box, chat_state])
+                               [msg_box, chatbot, police_username, chat_state,
+                                voice_on, call_mode],
+                               [chatbot, msg_box, chat_state, reply_audio,
+                                call_btn, call_mode, call_status])
+                # 关闭 🔊 开关时同步清空回复播放器：上一条 MP3 立即消失，
+                # 不残留在对话框（开关只切图标，不动播放器，MP3 会一直留着）
+                voice_btn.click(
+                    lambda: gr.update(value=None),
+                    None, [reply_audio],
+                )
+
+                # ---------- 电话式语音对话（像打电话：接通后直接说话） ----------
+                # 浏览器端连续录音 + 音量分句：说话时音量升高，静音超过阈值
+                # 自动把这一段发 /api/stt 转写、填入输入框并发送，像真打电话一样
+                # 免按免点；播报期间丢弃采集（麦克风会录到扬声器回声）
+                def toggle_call(mode):
+                    """拨号 / 挂断（红色电话键）：接通后直接说话，停顿即自动发送。"""
+                    if not bool(mode):
+                        return (True, "📞 已接通 — 直接说话，停顿即自动发送"
+                                      "（如未采集请在浏览器允许麦克风）",
+                                gr.update(value="📵"))
+                    return (False, "📞 已挂断 — 点红色电话键重新接通",
+                            gr.update(value="📞"))
+
+                # RMCall 定义块：页面加载时执行一次（提取出来以便"检测到事故
+                # 自动接通"在任何时刻都能 start —— 原来定义挂在电话键点击里，
+                # 从未点过电话键时 window.RMCall 不存在，自动接通无从启动）
+                _CALL_DEF_JS = """() => {
+                    if (!window.RMCall) {
+                        const C = window.RMCall = {
+                            stream: null, recorder: null, analyser: null,
+                            chunks: [], speaking: false, lastVoice: 0,
+                            paused: false, timer: null, raf: 0,
+                        };
+                        C.status = (t) => {
+                            const p = document.querySelector('.call-status p');
+                            if (p) p.textContent = t;
+                        };
+                        // 通话视图：语音助手小虎鲸（正面朝向用户）+ 声音频率动态
+                        C.view = () => {
+                            const host = document.getElementById('rm-call-view');
+                            if (!host) return null;
+                            if (!host.querySelector('.rm-avatar')) {
+                                host.innerHTML =
+                                    '<div class="rm-avatar listen" id="rm-avatar">' +
+                                    '<div class="rm-ring"></div>' +
+                                    '<svg class="rm-orca" viewBox="0 0 250 220">' +
+                                    '<defs>' +
+                                    '<linearGradient id="rmBodyG" x1="0%" y1="0%" x2="100%" y2="100%">' +
+                                    '<stop offset="0%" stop-color="#1a1a2e"/>' +
+                                    '<stop offset="50%" stop-color="#0f0f1a"/>' +
+                                    '<stop offset="100%" stop-color="#0a0a12"/>' +
+                                    '</linearGradient>' +
+                                    '<linearGradient id="rmBellyG" x1="0%" y1="0%" x2="0%" y2="100%">' +
+                                    '<stop offset="0%" stop-color="#ffffff"/>' +
+                                    '<stop offset="100%" stop-color="#f0f9ff"/>' +
+                                    '</linearGradient>' +
+                                    '<linearGradient id="rmEyeG" x1="0%" y1="0%" x2="0%" y2="100%">' +
+                                    '<stop offset="0%" stop-color="#7dd3fc"/>' +
+                                    '<stop offset="50%" stop-color="#38bdf8"/>' +
+                                    '<stop offset="100%" stop-color="#0ea5e9"/>' +
+                                    '</linearGradient>' +
+                                    '<radialGradient id="rmEyeShine" cx="30%" cy="30%" r="50%">' +
+                                    '<stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>' +
+                                    '<stop offset="40%" stop-color="#ffffff" stop-opacity="0.9"/>' +
+                                    '<stop offset="100%" stop-color="#ffffff" stop-opacity="0.4"/>' +
+                                    '</radialGradient>' +
+                                    '<filter id="rmGlow"><feGaussianBlur stdDeviation="2" result="coloredBlur"/><feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>' +
+                                    '</defs>' +
+                                    '<g class="rm-bubbles">' +
+                                    '<circle class="rm-bub b1" cx="50" cy="45" r="4.5"/>' +
+                                    '<circle class="rm-bub b2" cx="195" cy="40" r="3.5"/>' +
+                                    '<circle class="rm-bub b3" cx="40" cy="70" r="3"/>' +
+                                    '<circle class="rm-bub b4" cx="205" cy="60" r="2.5"/>' +
+                                    '<circle class="rm-bub b5" cx="60" cy="35" r="2"/>' +
+                                    '<circle class="rm-bub b6" cx="185" cy="50" r="1.8"/>' +
+                                    '</g>' +
+                                    '<g class="rm-tail-wrap">' +
+                                    '<path class="rm-tail" d="M175 150 ' +
+                                    'C205 148 222 132 228 105 ' +
+                                    'C231 118 228 133 220 143 ' +
+                                    'C228 146 238 141 243 131 ' +
+                                    'C242 151 228 165 205 168 ' +
+                                    'C190 170 178 162 175 150 Z" fill="url(#rmBodyG)"/>' +
+                                    '</g>' +
+                                    '<g class="rm-dorsal">' +
+                                    '<path d="M96 76 C100 30 124 12 146 26 ' +
+                                    'C135 37 126 50 122 78 Z" fill="url(#rmBodyG)"/>' +
+                                    '</g>' +
+                                    '<ellipse cx="120" cy="125" rx="80" ry="68" fill="url(#rmBodyG)" transform="rotate(-7 120 125)"/>' +
+                                    '<ellipse cx="120" cy="155" rx="66" ry="50" fill="url(#rmBellyG)" transform="rotate(-7 120 155)"/>' +
+                                    '<ellipse cx="62" cy="140" rx="19" ry="12" fill="url(#rmBodyG)" opacity="0.85" transform="rotate(-22 62 140)"/>' +
+                                    '<ellipse cx="178" cy="132" rx="22" ry="14" fill="url(#rmBodyG)" transform="rotate(24 178 132)"/>' +
+                                    '<ellipse cx="82" cy="108" rx="18" ry="20" fill="#ffffff" opacity="0.98"/>' +
+                                    '<ellipse cx="158" cy="106" rx="20" ry="22" fill="#ffffff" opacity="0.98"/>' +
+                                    '<circle class="rm-eye" cx="88" cy="113" r="12" fill="url(#rmEyeG)" filter="url(#rmGlow)"/>' +
+                                    '<circle class="rm-eye" cx="152" cy="111" r="13" fill="url(#rmEyeG)" filter="url(#rmGlow)"/>' +
+                                    '<circle cx="92" cy="108" r="5" fill="url(#rmEyeShine)"/>' +
+                                    '<circle cx="157" cy="105" r="5.5" fill="url(#rmEyeShine)"/>' +
+                                    '<path class="rm-mouth" d="M90 150 Q116 168 144 148" stroke="#f87171" stroke-width="3" fill="none" stroke-linecap="round"/>' +
+                                    '<ellipse class="rm-blush" cx="70" cy="140" rx="12" ry="6.5" fill="#fca5a5" opacity="0.55"/>' +
+                                    '<ellipse class="rm-blush" cx="168" cy="138" rx="13" ry="7" fill="#fca5a5" opacity="0.55"/>' +
+                                    '<circle cx="78" cy="72" r="2.2" fill="#ffffff" opacity="0.35"/>' +
+                                    '<circle cx="92" cy="66" r="1.6" fill="#ffffff" opacity="0.25"/>' +
+                                    '<circle cx="162" cy="70" r="2" fill="#ffffff" opacity="0.3"/>' +
+                                    '<circle cx="148" cy="64" r="1.4" fill="#ffffff" opacity="0.2"/>' +
+                                    '</svg>' +
+                                    '</div>' +
+                                    '<canvas id="rm-wave" width="360" height="56"></canvas>';
+                            }
+                            return host;
+                        };
+                        C.setFace = (st) => {
+                            const av = document.getElementById('rm-avatar');
+                            if (av) av.className = 'rm-avatar ' + st;
+                        };
+                        C.send = async (blob) => {
+                            try {
+                                const fd = new FormData();
+                                fd.append('audio', blob, 'segment.webm');
+                                const r = await fetch('/api/stt', {method: 'POST', body: fd});
+                                const j = await r.json();
+                                const text = (j && j.data && j.data.text || '').trim();
+                                if (!text) { C.setFace('listen'); return; }
+                                C.setFace('think');
+                                const ta = document.querySelector('.input-row textarea');
+                                if (!ta) return;
+                                ta.value = text;
+                                ta.dispatchEvent(new Event('input', {bubbles: true}));
+                                setTimeout(() => {
+                                    const b = document.querySelector(
+                                        '.input-row button.submit-button');
+                                    if (b) b.click();
+                                }, 200);
+                            } catch (e) { C.setFace('listen'); }
+                        };
+                        C.tick = () => {
+                            if (!C.analyser || C.paused
+                                    || !C.recorder || C.recorder.state !== 'recording') {
+                                return;
+                            }
+                            const data = new Uint8Array(C.analyser.frequencyBinCount);
+                            C.analyser.getByteFrequencyData(data);
+                            let sum = 0;
+                            for (const v of data) sum += v * v;
+                            const rms = Math.sqrt(sum / data.length);
+                            const now = Date.now();
+                            if (rms > 12) {
+                                if (!C.speaking) C.setFace('listen');
+                                C.speaking = true;
+                                C.lastVoice = now;
+                            }
+                            if (C.speaking && now - C.lastVoice > 1500) {
+                                C.speaking = false;
+                                C.lastVoice = now;
+                                C.status('🤔 正在识别…');
+                                C.setFace('think');
+                                C.recorder.stop();
+                            }
+                        };
+                        // 声音频率动态：每帧把麦克风输入画成发光频谱条
+                        C.draw = () => {
+                            const cv = document.getElementById('rm-wave');
+                            if (!cv) return;
+                            const g = cv.getContext('2d');
+                            const W = cv.width, H = cv.height;
+                            g.clearRect(0, 0, W, H);
+                            if (!C.analyser) return;
+                            const data = new Uint8Array(C.analyser.frequencyBinCount);
+                            C.analyser.getByteFrequencyData(data);
+                            const bars = 36;
+                            const step = Math.floor(data.length / bars) || 1;
+                            const bw = W / bars;
+                            g.shadowColor = 'rgba(13, 148, 136, .55)';
+                            g.shadowBlur = 8;
+                            for (let i = 0; i < bars; i++) {
+                                let s = 0;
+                                for (let j = 0; j < step; j++) s += data[i * step + j];
+                                const h = Math.max(3, (s / step / 255) * (H - 6));
+                                const x = i * bw + 1.5, y = H - h, w = bw - 3;
+                                const r = Math.min(w / 2, 3);
+                                const grad = g.createLinearGradient(0, y, 0, H);
+                                grad.addColorStop(0, '#2dd4bf');
+                                grad.addColorStop(1, '#0d9488');
+                                g.fillStyle = grad;
+                                g.beginPath();
+                                g.moveTo(x + r, y);
+                                g.arcTo(x + w, y, x + w, y + h, r);
+                                g.arcTo(x + w, y + h, x, y + h, r);
+                                g.arcTo(x, y + h, x, y, r);
+                                g.arcTo(x, y, x + w, y, r);
+                                g.closePath();
+                                g.fill();
+                            }
+                        };
+                        C.start = async () => {
+                            if (C.stream) { C.paused = false; return; }
+                            try {
+                                C.stream = await navigator.mediaDevices.getUserMedia(
+                                    {audio: true});
+                            } catch (e) {
+                                C.status('❌ 麦克风授权失败，请允许麦克风后重新拨号');
+                                const cb = document.querySelector(
+                                    '.input-row button.call-btn-red');
+                                if (cb) cb.textContent = '📞';
+                                return;
+                            }
+                            C.setFace('listen');
+                            const host = C.view();
+                            if (host) host.classList.add('on');
+                            const ctx = new (window.AudioContext
+                                             || window.webkitAudioContext)();
+                            C.ctx = ctx;
+                            C.analyser = ctx.createAnalyser();
+                            ctx.createMediaStreamSource(C.stream).connect(C.analyser);
+                            C.recorder = new MediaRecorder(C.stream);
+                            C.recorder.ondataavailable = (e) => {
+                                if (e.data && e.data.size > 0 && !C.paused) {
+                                    C.chunks.push(e.data);
+                                }
+                            };
+                            C.recorder.onstop = async () => {
+                                const blob = new Blob(C.chunks,
+                                                      {type: 'audio/webm'});
+                                C.chunks = [];
+                                if (blob.size > 2000) await C.send(blob);
+                                if (C.stream && C.recorder
+                                        && C.recorder.state === 'inactive') {
+                                    C.recorder.start(1000);
+                                }
+                            };
+                            C.recorder.start(1000);
+                            C.speaking = false;
+                            C.lastVoice = Date.now();
+                            C.paused = false;
+                            C.timer = setInterval(C.tick, 120);
+                            const loop = () => {
+                                C.draw();
+                                C.raf = requestAnimationFrame(loop);
+                            };
+                            loop();
+                        };
+                        // 播报回声：扬声器播放时麦克风会录到，暂停采集并丢缓冲；
+                        // 播报期间助手切"说"状态，播完回"听"
+                        //（注册在定义块：每次拨号只走 start，监听不能重复挂）
+                        document.addEventListener('play', (e) => {
+                            if (e.target.matches('.reply-audio audio')) {
+                                C.paused = true; C.chunks = [];
+                                C.setFace('speak');
+                            }
+                        }, true);
+                        document.addEventListener('ended', (e) => {
+                            if (e.target.matches('.reply-audio audio')) {
+                                C.paused = false;
+                                C.setFace('listen');
+                            }
+                        }, true);
+                        document.addEventListener('pause', (e) => {
+                            if (e.target.matches('.reply-audio audio')) {
+                                C.paused = false;
+                                C.setFace('listen');
+                            }
+                        }, true);
+                        C.stop = () => {
+                            if (C.timer) { clearInterval(C.timer); C.timer = null; }
+                            if (C.raf) { cancelAnimationFrame(C.raf); C.raf = 0; }
+                            if (C.recorder) {
+                                C.recorder.onstop = null;
+                                if (C.recorder.state !== 'inactive') C.recorder.stop();
+                            }
+                            if (C.stream) {
+                                C.stream.getTracks().forEach((t) => t.stop());
+                            }
+                            // 挂断即静音：正在播报的助手语音立即停止
+                            const rep = document.querySelector('.reply-audio audio');
+                            if (rep && !rep.paused) rep.pause();
+                            // 关闭音频上下文：不关会随拨号次数泄漏，多次通话后失效
+                            if (C.ctx) {
+                                try { C.ctx.close(); } catch (e) { /* 已关闭 */ }
+                                C.ctx = null;
+                            }
+                            C.stream = null; C.recorder = null; C.analyser = null;
+                            C.chunks = []; C.speaking = false; C.paused = false;
+                            const host = document.getElementById('rm-call-view');
+                            if (host) host.classList.remove('on');
+                        };
+                    }
+                }"""
+                _CALL_JS = """() => {
+                    const C = window.RMCall;
+                    if (!C) return;
+                    // 启停只看自身采集状态：Gradio 事件快照的 call_mode 可能是
+                    // 更新后的值（挂断时拿到 False 会误 start，麦克风关不掉）
+                    if (C.stream) { C.stop(); }
+                    else { C.start(); }
+                }"""
+                # 检测到事故自动接通：Python 侧把 call_mode 置 True（像真人来电），
+                # State 变化触发本 JS —— 自动开始浏览器端录音，播报研判结果，
+                # 播完自动续录听车主说话
+                _AUTO_CALL_JS = """(m) => {
+                    const C = window.RMCall;
+                    if (!C || !m) return;
+                    if (C.stream) return;
+                    C.start();
+                }"""
+                call_btn.click(toggle_call, [call_mode],
+                               [call_mode, call_status, call_btn])
+                call_btn.click(fn=None, outputs=None, js=_CALL_JS)
+                # RMCall 定义在页面加载时注册（一次）；检测到事故自动接通：
+                # call_mode 置 True 后 State 变化触发 _AUTO_CALL_JS 启动录音
+                demo.load(fn=None, inputs=None, outputs=None, js=_CALL_DEF_JS)
+                call_mode.change(fn=None, inputs=[call_mode], outputs=None,
+                                 js=_AUTO_CALL_JS)
+
+                # ---------- 语音输入（按住说话，微信式） ----------
+                # 🎤 语音输入键：按住开始录音，松开结束并自动转写发送；
+                # 按住期间按钮变深色 + 状态行提示，移出按钮范围松开同样结束。
+                # Gradio Button 只支持 click，按住检测用原生 JS（mousedown/mouseup）
+                # 在页面加载后绑定到按钮 DOM 上（轮询绑定，兼容延迟渲染）。
+                # 与电话模式分开：电话模式是连续对话，语音输入是单次发送。
+                _VOICE_INPUT_JS = """() => {
+                    if (!window.RMVoiceInput) {
+                        const V = window.RMVoiceInput = {
+                            stream: null, recorder: null, chunks: [],
+                            startTime: 0, active: false,
+                        };
+                        V.status = (t) => {
+                            const p = document.querySelector('.call-status p');
+                            if (p) p.textContent = t;
+                        };
+                        V.btn = () => document.querySelector('.voice-input-btn button')
+                                     || document.querySelector('.voice-input-btn');
+                        V.cleanup = () => {
+                            if (V.stream) {
+                                V.stream.getTracks().forEach((t) => t.stop());
+                            }
+                            V.stream = null; V.recorder = null;
+                            const b = V.btn();
+                            if (b) b.classList.remove('recording');
+                        };
+                        V.begin = async () => {
+                            if (V.active) return;
+                            V.active = true;
+                            const b = V.btn();
+                            if (b) b.classList.add('recording');
+                            V.status('🔴 录音中… 松开结束');
+                            try {
+                                V.stream = await navigator.mediaDevices.getUserMedia(
+                                    {audio: true});
+                            } catch (e) {
+                                V.active = false;
+                                V.cleanup();
+                                V.status('❌ 麦克风授权失败，请允许麦克风');
+                                return;
+                            }
+                            if (!V.active) { V.cleanup(); return; }
+                            V.chunks = [];
+                            V.startTime = Date.now();
+                            V.recorder = new MediaRecorder(V.stream);
+                            V.recorder.ondataavailable = (e) => {
+                                if (e.data && e.data.size > 0) V.chunks.push(e.data);
+                            };
+                            V.recorder.start(200);
+                        };
+                        V.end = () => {
+                            if (!V.active) return;
+                            V.active = false;
+                            const held = Date.now() - V.startTime > 300;
+                            const b = V.btn();
+                            if (b) b.classList.remove('recording');
+                            if (!held || !V.recorder
+                                    || V.recorder.state !== 'recording') {
+                                V.cleanup();
+                                if (!held) V.status('📞 按住左侧 🎤 说话，松开即发送');
+                                return;
+                            }
+                            V.status('🤔 正在识别…');
+                            V.recorder.onstop = async () => {
+                                V.cleanup();
+                                if (V.chunks.length === 0) {
+                                    V.status('🎤 未录到声音，请按住说话');
+                                    return;
+                                }
+                                try {
+                                    const blob = new Blob(V.chunks,
+                                                          {type: 'audio/webm'});
+                                    const fd = new FormData();
+                                    fd.append('audio', blob, 'voice.webm');
+                                    const r = await fetch('/api/stt',
+                                                          {method: 'POST', body: fd});
+                                    const j = await r.json();
+                                    const text =
+                                        (j && j.data && j.data.text || '').trim();
+                                    if (text) {
+                                        const ta = document.querySelector(
+                                            '.input-row textarea');
+                                        if (ta) {
+                                            ta.value = text;
+                                            ta.dispatchEvent(new Event('input',
+                                                {bubbles: true}));
+                                            setTimeout(() => {
+                                                const sb = document.querySelector(
+                                                    '.input-row button.submit-button');
+                                                if (sb) sb.click();
+                                            }, 150);
+                                        }
+                                    } else {
+                                        V.status('🎤 未识别到语音，请按住说话');
+                                    }
+                                } catch (e) {
+                                    V.status('⚠️ 语音识别失败');
+                                }
+                            };
+                            V.recorder.stop();
+                        };
+                        V.attach = (b) => {
+                            if (b.dataset.rmBound) return true;
+                            b.dataset.rmBound = '1';
+                            b.title = '按住说话，松开发送';
+                            b.addEventListener('mousedown', (e) => {
+                                e.preventDefault(); V.begin();
+                            });
+                            b.addEventListener('touchstart', (e) => {
+                                e.preventDefault(); V.begin();
+                            }, {passive: false});
+                            document.addEventListener('mouseup', () => V.end());
+                            document.addEventListener('touchend', () => V.end());
+                            b.addEventListener('mouseleave', () => V.end());
+                            return true;
+                        };
+                        const iv = setInterval(() => {
+                            const b = V.btn();
+                            if (b && V.attach(b)) clearInterval(iv);
+                        }, 800);
+                    }
+                }"""
+                demo.load(fn=None, inputs=None, outputs=None, js=_VOICE_INPUT_JS)
+                
+                # 📞 电话键：语音对话模式提示
+                def call_hint(in_call):
+                    if in_call:
+                        return "📞 通话中 — 直接说话，停顿即自动发送（实时对话模式）"
+                    return "📞 点击接通电话，进入实时语音对话模式"
+
+                call_btn.click(call_hint, [call_mode], [call_status])
                 for btn, q in zip(quick_btns, _QUICK_ASKS):
                     btn.click(
                         lambda qq=q: {"text": qq, "files": []},
@@ -896,7 +1683,7 @@ def build_demo() -> gr.Blocks:
             # ---------- 交警端 ----------
             with gr.Tab("👮 交警端"):
                 gr.Markdown("### 👮 交警端 · 案件研判管理")
-                # 登录统一在右上角 ⚙️ 设置 里，这里只留提示与案件管理
+                # 登录统一在 ⚙️ 设置面板里，这里只留提示与案件管理
                 police_hint_md = gr.Markdown(
                     "未登录 —— 对话记忆不保留，请从 "
                     "[登录页](http://localhost:8080/#/login) 登录进入")
@@ -983,7 +1770,7 @@ def build_demo() -> gr.Blocks:
             None, [settings_panel, panel_open],
         )
         # 初始浅色：Gradio 默认跟随系统偏好（系统深色时自动给 body 加 .dark），
-        # 页面加载后移掉它，初始即浅色；右上角 🌗 仍可手动切换深色
+        # 页面加载后移掉它，初始即浅色；设置面板里的 🌗 仍可手动切换深色
         demo.load(
             fn=None, inputs=None, outputs=None,
             js="() => { document.body.classList.remove('dark'); }",

@@ -76,5 +76,16 @@ class Settings(BaseSettings):
     # 部署到公网务必设为 false，否则任何人都能改你的模型配置与 Key。
     allow_runtime_llm_config: bool = True
 
+    # 语音输入（STT）：网关转写模型（/v1/audio/transcriptions，实测 SenseVoice
+    # 300~600ms；未配置网关或调用失败回退本地 faster-whisper，慢一个量级）
+    stt_gateway_model: str = "SenseVoice"
+
+    # 语音对话专用 LLM：短回复要快，实测 glm-4-9b ~0.6s / Qwen3.5-9B ~1.4s，
+    # 远快于 deepseek-v4-flash（2.7~4.5s+）；仅语音模式（short=True）使用
+    voice_chat_model: str = "glm-4-9b"
+    # 语音对话 LLM 硬超时：网关偶发抖动（实测有 90s 不返回），
+    # 语音来回要压在几秒内，超时直接给提示语，不等
+    voice_chat_timeout_s: float = 15.0
+
 
 settings = Settings()

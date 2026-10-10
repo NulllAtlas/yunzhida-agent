@@ -23,5 +23,11 @@ ultralytics>=8.3.0,<9.0.0
 # Gradio 界面（frontend/gradio_app.py，豆包风格交互）
 gradio==6.29.1
 requests==2.32.3
+# 文本转语音（语音对话，app/services/tts.py）：微软 Edge 在线 TTS，中文自然，
+# 需联网；合成失败由调用方静默降级（无音频，对话不受影响）
+edge-tts>=7.0.0,<8.0.0
+# 语音输入（语音对话，app/services/stt.py）：faster-whisper 本地转写，
+# 模型走 HF 镜像下载（stt.py 内设 HF_ENDPOINT），首次运行会下载 base 模型
+faster-whisper>=1.0.0,<2.0.0
 # 测试
 pytest==9.1.1

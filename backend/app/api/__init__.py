@@ -6,6 +6,8 @@ from app.api.routers.config import router as config_router
 from app.api.routers.interact import router as interact_router
 from app.api.routers.police import router as police_router
 from app.api.routers.progress import router as progress_router
+from app.api.routers.stt import router as stt_router
+from app.api.routers.tts import router as tts_router
 
 __all__ = [
     "auth_router",
@@ -15,4 +17,6 @@ __all__ = [
     "interact_router",
     "police_router",
     "progress_router",
+    "stt_router",
+    "tts_router",
 ]

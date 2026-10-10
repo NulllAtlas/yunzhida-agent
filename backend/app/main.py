@@ -19,6 +19,8 @@ from app.api import (
     interact_router,
     police_router,
     progress_router,
+    stt_router,
+    tts_router,
 )
 from app.core.config import settings
 from app.core.db import init_db
@@ -54,6 +56,8 @@ app.include_router(progress_router)  # D4/D5：WebSocket 进度推送
 app.include_router(interact_router)  # D12：双端联动（状态流转 / 交警下发 / 车主查看）
 app.include_router(config_router)    # 运行时切换大模型（界面右上角模型选择）
 app.include_router(chat_router)      # 对话接口（多轮对话透传 MoMA）
+app.include_router(tts_router)       # 文本转语音（语音对话，回复朗读）
+app.include_router(stt_router)       # 语音输入（语音对话，麦克风转文字）
 
 # 事故车辆标注关键帧：视频感知后落在 outputs 目录，这里静态暴露成 /outputs/*，
 # 界面直接用 URL 展示标注图。必须在 Gradio mount("/") 之前注册，否则被根路径接管

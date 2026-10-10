@@ -34,6 +34,13 @@ _SYSTEM_PROMPT = (
 _COMFORT_RE = re.compile(r"别担心|别慌|别着急|先确认|安全第一|人在就好|深呼吸|先别")
 _COMFORT_LINE = "别担心，先确认人和车都安全，我来帮你梳理。\n\n"
 
+# 语音对话模式的追加约束：回复会被朗读，限短限口语，压低单轮来回延迟
+_VOICE_SHORT_PROMPT = (
+    "当前是语音对话模式：你的回复会被转成语音朗读给车主听。"
+    "回复控制在 60 字以内，先安抚一句、再给最重要的一条建议，只说一两句；"
+    "不要分点、不要 markdown 符号、不要引用法条编号，用自然的口语短句。"
+)
+
 _PARTY_LABEL = {
     "primary": "主要责任",
     "secondary": "次要责任",
@@ -52,6 +59,9 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
     # 可选：把指定案件的判定结果作为答疑上下文注入
     case_id: str = Field("", max_length=64)
+    # 语音对话模式：回复限短（口语化、不引用法条编号），缩短 LLM 生成与 TTS
+    # 合成时间 —— 语音链路里回复越长，转写合成播放的来回延迟越大
+    short: bool = False
 
 
 def _case_context(case_id: str) -> str:
@@ -130,6 +140,8 @@ async def chat(req: ChatRequest) -> dict[str, Any]:
     system = _SYSTEM_PROMPT
     if context:
         system += "\n\n【当前案件判定结果上下文】\n" + context
+    if req.short:
+        system += "\n\n" + _VOICE_SHORT_PROMPT
 
     last_user = next((m.content for m in reversed(history) if m.role == "user"), "")
     if settings.use_mock or not settings.moma_base_url:
@@ -141,10 +153,22 @@ async def chat(req: ChatRequest) -> dict[str, Any]:
             {"role": m.role, "content": m.content}
             for m in history if m.role in ("user", "assistant")
         ]
-        try:
-            reply = await llm_service.call_chat(messages, temperature=0.3)
-        except Exception:  # noqa: BLE001 — 网关异常返回友好提示
-            reply = "抱歉，研判服务暂时不可用，请稍后重试。"
+        if req.short:
+            # 语音模式：用实测最快的小模型 + 短硬超时，单轮压在几秒内；
+            # 超时/失败返回提示语（比干等十几秒的网关抖动强）
+            try:
+                reply = await llm_service.call_chat(
+                    messages, temperature=0.3,
+                    model=settings.voice_chat_model or None,
+                    timeout_s=settings.voice_chat_timeout_s,
+                )
+            except Exception:  # noqa: BLE001 — 语音来回不能干等
+                reply = "抱歉，我这边响应慢了，请您再说一遍。"
+        else:
+            try:
+                reply = await llm_service.call_chat(messages, temperature=0.3)
+            except Exception:  # noqa: BLE001 — 网关异常返回友好提示
+                reply = "抱歉，研判服务暂时不可用，请稍后重试。"
 
     # 安抚开头兜底：LLM 没按 system prompt 以安抚语开头时，前置一句保证语气统一
     if not _COMFORT_RE.search(reply[:60]):
