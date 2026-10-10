@@ -1263,6 +1263,9 @@ def build_demo() -> gr.Blocks:
                             stream: null, recorder: null, analyser: null,
                             chunks: [], speaking: false, lastVoice: 0,
                             paused: false, timer: null, raf: 0,
+                            dest: null, hot: 0, speakStart: 0,
+                            fillers: [], buf: '', pendingSegment: false,
+                            calib: { n: 0, sum: 0, floor: 7 },
                         };
                         C.status = (t) => {
                             const p = document.querySelector('.call-status p');
@@ -1346,23 +1349,59 @@ def build_demo() -> gr.Blocks:
                             const av = document.getElementById('rm-avatar');
                             if (av) av.className = 'rm-avatar ' + st;
                         };
-                        C.send = async (blob) => {
+                        // seg=true（2 秒切段）：只转写积累不发送 —— 不打断说话、
+                        // 不触发回复播报；停顿后合并缓冲成一条完整消息再发送，
+                        // 上下文完整且不会每 2 秒压一次 LLM（此前每段都发送 +
+                        // 播报，采集大量暂停，用户的话被丢，导致"不回话"）
+                        C.send = async (blob, seg) => {
                             try {
                                 const fd = new FormData();
                                 fd.append('audio', blob, 'segment.webm');
                                 const r = await fetch('/api/stt', {method: 'POST', body: fd});
                                 const j = await r.json();
                                 const text = (j && j.data && j.data.text || '').trim();
-                                if (!text) { C.setFace('listen'); return; }
+                                if (seg) {
+                                    // 切段：转写进缓冲（≥2 字才有意义），静默续录
+                                    if (text.length >= 2) {
+                                        C.buf = (C.buf ? C.buf + ' ' : '') + text;
+                                    }
+                                    C.setFace('listen');
+                                    return;
+                                }
+                                // 停顿分句：合并切段缓冲 → 一条完整消息发送
+                                const full = ((C.buf ? C.buf + ' ' : '')
+                                              + text).trim();
+                                C.buf = '';
+                                // 转写太短（单字/标点，多为杂音误识）不发送
+                                if (!full || full.length < 2) {
+                                    C.setFace('listen');
+                                    C.status('📞 已接通 — 直接说话，停顿即自动发送');
+                                    return;
+                                }
                                 C.setFace('think');
                                 const ta = document.querySelector('.input-row textarea');
                                 if (!ta) return;
-                                ta.value = text;
+                                ta.value = full;
                                 ta.dispatchEvent(new Event('input', {bubbles: true}));
                                 setTimeout(() => {
                                     const b = document.querySelector(
                                         '.input-row button.submit-button');
                                     if (b) b.click();
+                                    // 思考期间播一句语气词应答（"嗯嗯/让我想想"）：
+                                    // 像真人打电话听到后的应声，不再长时间沉默；
+                                    // 播报中采集自动暂停（防回声），播完自动续录；
+                                    // LLM 回复到达后替换播报，思考结果紧随其后
+                                    if (C.fillers && C.fillers.length) {
+                                        const rep = document.querySelector(
+                                            '.reply-audio audio');
+                                        if (rep) {
+                                            rep.src = C.fillers[
+                                                Math.floor(Math.random()
+                                                           * C.fillers.length)];
+                                            const p = rep.play();
+                                            if (p && p.catch) p.catch(() => {});
+                                        }
+                                    }
                                 }, 200);
                             } catch (e) { C.setFace('listen'); }
                         };
@@ -1373,20 +1412,73 @@ def build_demo() -> gr.Blocks:
                             }
                             const data = new Uint8Array(C.analyser.frequencyBinCount);
                             C.analyser.getByteFrequencyData(data);
-                            let sum = 0;
-                            for (const v of data) sum += v * v;
-                            const rms = Math.sqrt(sum / data.length);
+                            // 人声频段（300-3400Hz）能量：只统计说话集中的频带，
+                            // 低频嗡嗡与高频嘶嘶不抬能量，环境杂音基本不影响判定
+                            const nyquist = (C.ctx ? C.ctx.sampleRate : 48000) / 2;
+                            const lo = Math.min(data.length - 1,
+                                                Math.floor(300 / nyquist * data.length));
+                            const hi = Math.min(data.length,
+                                                Math.ceil(3400 / nyquist * data.length));
+                            let sum = 0, n = 0;
+                            for (let i = lo; i < hi; i++) { sum += data[i] * data[i]; n++; }
+                            const rms = Math.sqrt(sum / (n || 1));
                             const now = Date.now();
-                            if (rms > 12) {
-                                if (!C.speaking) C.setFace('listen');
-                                C.speaking = true;
-                                C.lastVoice = now;
+                            // 环境音校准：接通后前 2 秒只听不判，采集噪声基线，
+                            // 环境吵时阈值自动抬高，基本只认人声
+                            if (C.calib.n < 16) {
+                                C.calib.sum += rms;
+                                C.calib.n++;
+                                if (C.calib.n === 16) {
+                                    C.calib.floor = Math.max(4, C.calib.sum / 16 * 1.3);
+                                    C.status('📞 已接通 — 直接说话，停顿即自动发送');
+                                } else {
+                                    C.status('🎤 正在适应环境音…');
+                                }
+                                return;
+                            }
+                            const threshold = Math.max(C.calib.floor * 2.2, 14);
+                            if (rms > threshold) {
+                                C.hot = (C.hot || 0) + 1;
+                                // 连续 2 帧超阈值才算开口：单帧噪声脉冲
+                                //（敲键盘/关门/咳嗽起始）不误触发
+                                if (C.hot >= 2) {
+                                    if (!C.speaking) {
+                                        C.setFace('listen');
+                                        C.speakStart = now;
+                                    }
+                                    C.speaking = true;
+                                    C.lastVoice = now;
+                                }
+                            } else {
+                                C.hot = 0;
                             }
                             if (C.speaking && now - C.lastVoice > 1500) {
+                                // 静音分句：说完停 1.5 秒 → 发送这一段
+                                const spoken = now - (C.speakStart || now) - 1500;
                                 C.speaking = false;
+                                C.hot = 0;
                                 C.lastVoice = now;
+                                if (spoken < 400) {
+                                    // 说话时长不足（多为杂音脉冲）丢弃这一段，
+                                    // 不送识别，直接续录
+                                    C.status('🎤 太短了，请多说几句');
+                                    C.setFace('listen');
+                                    C.recorder.stop();
+                                    return;
+                                }
                                 C.status('🤔 正在识别…');
                                 C.setFace('think');
+                                C.recorder.stop();
+                            } else if (C.speaking
+                                       && now - (C.speakStart || now) > 2000) {
+                                // 长段连续说话：每 2 秒切段只转写积累（不发消息、
+                                // 不播报、不打断说话），停顿后合并成一条完整消息
+                                // 发送 —— 上下文合适且不会每 2 秒压一次 LLM
+                                C.speaking = false;
+                                C.hot = 0;
+                                C.lastVoice = now;
+                                C.speakStart = 0;
+                                C.pendingSegment = true;
                                 C.recorder.stop();
                             }
                         };
@@ -1438,14 +1530,48 @@ def build_demo() -> gr.Blocks:
                                 return;
                             }
                             C.setFace('listen');
+                            // 预合成语气词（思考期间的应答）：异步合成不阻塞录音，
+                            // 等用户说完话进入思考期时已就绪；
+                            // 合成失败就没有语气词，不影响通话
+                            if (!C.fillers.length) {
+                                ['嗯嗯，我在听', '好的好的', '让我想想哦',
+                                 '稍等一下哈', '嗯，我想想'].forEach(async (t) => {
+                                    try {
+                                        const r = await fetch('/api/tts',
+                                            {method: 'POST',
+                                             headers: {'Content-Type':
+                                                       'application/json'},
+                                             body: JSON.stringify({text: t})});
+                                        const j = await r.json();
+                                        if (j && j.code === 0 && j.data
+                                                && j.data.audio_url) {
+                                            C.fillers.push(j.data.audio_url);
+                                        }
+                                    } catch (e) { /* 无语气词，不影响通话 */ }
+                                });
+                            }
                             const host = C.view();
                             if (host) host.classList.add('on');
                             const ctx = new (window.AudioContext
                                              || window.webkitAudioContext)();
                             C.ctx = ctx;
+                            const src = ctx.createMediaStreamSource(C.stream);
+                            // 高通滤波（180Hz）：滤掉风扇/空调/电流的低频嗡嗡，
+                            // 频谱分析与录音都走这条干净链路，识别只对准人声
+                            const hp = ctx.createBiquadFilter();
+                            hp.type = 'highpass';
+                            hp.frequency.value = 180;
+                            hp.Q.value = 0.7;
                             C.analyser = ctx.createAnalyser();
-                            ctx.createMediaStreamSource(C.stream).connect(C.analyser);
-                            C.recorder = new MediaRecorder(C.stream);
+                            C.analyser.fftSize = 1024;
+                            src.connect(hp);
+                            hp.connect(C.analyser);
+                            const dest = ctx.createMediaStreamDestination();
+                            hp.connect(dest);
+                            C.dest = dest;
+                            C.recorder = new MediaRecorder(dest.stream);
+                            C.calib = { n: 0, sum: 0, floor: 7 };
+                            C.hot = 0;
                             C.recorder.ondataavailable = (e) => {
                                 if (e.data && e.data.size > 0 && !C.paused) {
                                     C.chunks.push(e.data);
@@ -1455,7 +1581,10 @@ def build_demo() -> gr.Blocks:
                                 const blob = new Blob(C.chunks,
                                                       {type: 'audio/webm'});
                                 C.chunks = [];
-                                if (blob.size > 2000) await C.send(blob);
+                                if (blob.size > 2000) {
+                                    await C.send(blob, C.pendingSegment);
+                                }
+                                C.pendingSegment = false;
                                 if (C.stream && C.recorder
                                         && C.recorder.state === 'inactive') {
                                     C.recorder.start(1000);
@@ -1513,6 +1642,9 @@ def build_demo() -> gr.Blocks:
                             }
                             C.stream = null; C.recorder = null; C.analyser = null;
                             C.chunks = []; C.speaking = false; C.paused = false;
+                            C.dest = null; C.hot = 0; C.speakStart = 0;
+                            C.buf = ''; C.pendingSegment = false;
+                            C.calib = { n: 0, sum: 0, floor: 7 };
                             const host = document.getElementById('rm-call-view');
                             if (host) host.classList.remove('on');
                         };
