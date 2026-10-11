@@ -1,13 +1,13 @@
 """
 Gradio 界面（豆包风格交互）—— 后端 8000 直接托管的主界面。
 
-- 左上角模式切换：🚗 车主端 / 👮 交警端
+- 左上角模式切换：🚗 车主端 / 🖥️ 监控端
 - 车主端（统一对话）：一个 multimodal 对话框承载三种传输方式 ——
   纯文字 → 对话问答；传视频 → 五节点研判；传图片 → 照片证据研判；
   研判结果作为对话回复进入上下文，可继续追问
 - 电话对答：接通红色电话键后直接说话（浏览器端连续录音 + 音量分句，
   停顿即自动转写发送），回复语音播报，播报期间暂停采集避免录到回声
-- 交警端：登录（统一在设置面板里） → 案件列表 → 案件详情 → 认定书草稿导出
+- 监控端：登录（统一在设置面板里） → 案件列表 → 案件详情 → 认定书草稿导出
 - 标题下方：模型管理（运行时切换大模型，走 /api/config/llm）
 - 模型管理与对话框之间（靠右）：语音播报开关与设置（登录入口 / 退出 / 主题切换）
 """
@@ -562,7 +562,7 @@ def _run_submission(text: str, video: str | None, photos: list[str],
             pass
         time.sleep(2)
     progress(1.0, desc="超时")
-    return f"❌ 分析超时（600s），任务 `{task_id}` 可稍后在交警端查看"
+    return f"❌ 分析超时（600s），任务 `{task_id}` 可稍后在监控端查看"
 
 
 def _render_result(res: dict, task_id: str, progress) -> str:
@@ -682,6 +682,33 @@ def restore_login(token: str | None, username: str):
                 gr.update(visible=False), False)
     return (None, "", gr.update(), "**账号**：未登录",
             gr.update(), gr.update(), gr.update(visible=True), True)
+
+
+def monitor_connect(url: str, name: str, sources: list):
+    """监控接入口：登记一路监控视频流（RTSP/RTMP/HTTP-FLV/本地摄像头编号）。"""
+    url = (url or "").strip()
+    name = (name or "").strip()
+    if not url:
+        return (sources, sources,
+                "⚠️ 请先输入监控流地址（rtsp://… 或本地摄像头编号 0）",
+                gr.update(), gr.update())
+    ok = (url.lower().startswith(("rtsp://", "rtsps://", "rtmp://",
+                                  "http://", "https://")) or url.isdigit())
+    if not ok:
+        return (sources, sources,
+                "⚠️ 流地址需以 rtsp:// / rtmp:// / http(s):// 开头，"
+                "或为本地摄像头编号（数字）",
+                gr.update(), gr.update())
+    label = name or f"监控源 {len(sources) + 1}"
+    out = [*sources, [label, url, "已接入"]]
+    return (out, out,
+            f"✅ 「{label}」已接入（{url}）",
+            gr.update(value=""), gr.update(value=""))
+
+
+def monitor_clear():
+    """清空全部已接入的监控源。"""
+    return [], [], "已清空全部监控源"
 
 
 def police_list_cases(token: str | None):
@@ -885,7 +912,7 @@ def build_demo() -> gr.Blocks:
                 outputs=[voice_on, voice_btn],
             )
 
-        # 全局共享登录态（设置界面的账号区与交警端共用）
+        # 全局共享登录态（设置界面的账号区与监控端共用）
         police_token = gr.State(None)
         police_username = gr.State("")
         # 车主端对话的全量会话消息：Gradio 的 queue/join 在提交事件时会快照
@@ -1812,13 +1839,49 @@ def build_demo() -> gr.Blocks:
                         lambda qq=q: {"text": qq, "files": []},
                         None, [msg_box],
                     )
-            # ---------- 交警端 ----------
-            with gr.Tab("👮 交警端"):
-                gr.Markdown("### 👮 交警端 · 案件研判管理")
-                # 登录统一在 ⚙️ 设置面板里，这里只留提示与案件管理
+            # ---------- 监控端 ----------
+            with gr.Tab("🖥️ 监控端"):
+                gr.Markdown("### 🖥️ 监控端 · 监控接入与案件研判管理")
+                # 与车主端一致：未登录直接可用（数据不保留），
+                # 登录可选 —— ⚙️ 设置面板里登录后记忆跟账号走；
+                # 案件列表/认定书导出因跟账号走仍需登录
                 police_hint_md = gr.Markdown(
-                    "未登录 —— 对话记忆不保留，请从 "
-                    "[登录页](http://localhost:8080/#/login) 登录进入")
+                    "未登录也可直接使用监控接入口与对话（数据不保留）；"
+                    "登录后记忆跟账号走 —— 右上角 ⚙️ 设置面板登录")
+                # 监控接入口：登记监控视频流（RTSP/RTMP/HTTP-FLV/本地摄像头），
+                # 接入后源列表随会话维护，供事故研判取流
+                with gr.Group():
+                    gr.Markdown("#### 📹 监控接入口")
+                    with gr.Row():
+                        monitor_url_in = gr.Textbox(
+                            label="监控流地址",
+                            placeholder="rtsp://user:pass@ip:554/stream"
+                                        " 或本地摄像头编号 0",
+                        )
+                        monitor_name_in = gr.Textbox(
+                            label="监控名称（可选）",
+                            placeholder="如：路口 A 南向",
+                        )
+                        monitor_connect_btn = gr.Button("🔗 接入监控")
+                    monitor_table = gr.Dataframe(
+                        headers=["名称", "流地址", "状态"],
+                        interactive=False,
+                    )
+                    with gr.Row():
+                        monitor_status = gr.Markdown("")
+                        monitor_clear_btn = gr.Button("🗑️ 清空全部", scale=0)
+                monitor_sources = gr.State([])
+                monitor_connect_btn.click(
+                    monitor_connect,
+                    [monitor_url_in, monitor_name_in, monitor_sources],
+                    [monitor_sources, monitor_table, monitor_status,
+                     monitor_url_in, monitor_name_in],
+                )
+                monitor_clear_btn.click(
+                    monitor_clear,
+                    None,
+                    [monitor_sources, monitor_table, monitor_status],
+                )
                 with gr.Group(visible=False) as case_group:
                     gr.Markdown("#### 案件列表")
                     list_btn = gr.Button("🔄 刷新案件列表")
@@ -1871,8 +1934,8 @@ def build_demo() -> gr.Blocks:
             [police_token, case_group, account_md],
         )
         logout_btn.click(
-            lambda: "未登录 —— 对话记忆不保留，请从 "
-                    "[登录页](http://localhost:8080/#/login) 登录进入",
+            lambda: "未登录也可直接使用监控接入口与对话（数据不保留）；"
+                    "登录后记忆跟账号走 —— 右上角 ⚙️ 设置面板登录",
             None, [police_hint_md],
         ).then(
             # 自主退出：清除记忆并跳回 :8080 登录门面（登录流程从门面走）。
