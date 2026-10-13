@@ -223,27 +223,19 @@ LLM 判定与规则兜底实际都只覆盖 **追尾 / 普通碰撞 / 单方撞�
 | --- | --- | --- |
 | **`docs/PROJECT.md`（本文件）** | 项目总说明：功能、架构、跑法、边界 | ✅ 与代码同步（2026-10-14） |
 | `docs/roadmind/SCENE-SCHEMA.md` | `scene.json` 字段与降级规则 | ⚠️ 待补 `vision` 字段与 `events[].boxes` |
-| `docs/roadmind/ARCHITECTURE.md` | 架构设计与感知能力缺口 | ⚠️ §3 图结构以本文件 §3.1 为准；§8.1 缺口分析仍有效 |
 | `docs/roadmind/RULES.md` | 判责规则与实现状态 | ✅ |
 | `docs/roadmind/RESPONSE-TEMPLATE.md` | 应急步骤模板 | ✅ |
 | `docs/roadmind/CASES.md` | 案例库索引 | ✅ |
 | `docs/roadmind/API.md` | 后端接口契约 | ⚠️ 缺语音/对话/配置等新接口，`GET /` 与超时默认值已过时 |
 | `docs/VOICE_CHAT_GUIDE.md` | 实时语音对话协议与实现 | ✅ |
 | `docs/VOICE_TROUBLESHOOTING.md` | 语音电话排障 | ✅ |
-| `docs/NEW_FEATURES_GUIDE.md` | 语音/分段功能的配置与用法 | ⚠️ 模型 ID 已变更 |
 | `deploy/docs/RUNBOOK.md` | 部署、换模型、加规则、排障 | ⚠️ 测试数与接口清单待更新 |
 | `backend/README.md` / `frontend/README.md` | 各端开发说明 | ⚠️ 目录与接口清单待更新 |
 
-**赛前规划与过程归档**（大赛延后，其中的排期已作废；作为团队分工/方案记录保留）：
-
-| 文档 | 覆盖 |
-| --- | --- |
-| `docs/roadmind/REQUIREMENTS.md` | 需求与主流程（Day1）；接口名与前端路由需按现状微调 |
-| `docs/roadmind/FEASIBILITY.md` | 赛前可行性论证 |
-| `docs/roadmind/TEAM-ROLES.md` | 模块地图、四角色分工、11 天排期 |
-| `docs/roadmind/TEAM-WORKFLOW.md` | 按人拆解的每日任务流程 |
-
-> 已删除的文档（内容描述的功能已从代码移除或与他文重复，需要时可从 git 历史取回）：
-> `docs/README.md`、`ACCIDENT_VOICE_CHAT_CHECK.md`、`ORCA_TRANSCRIPT_FEATURE.md`
-> （虎鲸右侧对话文字框，功能已删）、`NEW_FEATURES_PPT_OUTLINE.md`、`roadmind/CONTRACTS.md`、
-> `roadmind/P1-TODO.md`。
+> **仓库只保留代码需要的文档。** 已删除的 12 份（赛前规划、分工排期、需求、可行性、
+> 架构方案、PPT 大纲，以及描述已移除功能的说明），需要时可从 git 历史取回：
+> `docs/README.md`、`ACCIDENT_VOICE_CHAT_CHECK.md`、`ORCA_TRANSCRIPT_FEATURE.md`、
+> `NEW_FEATURES_PPT_OUTLINE.md`、`NEW_FEATURES_GUIDE.md`、
+> `roadmind/CONTRACTS.md`、`roadmind/P1-TODO.md`、`roadmind/REQUIREMENTS.md`、
+> `roadmind/FEASIBILITY.md`、`roadmind/TEAM-ROLES.md`、`roadmind/TEAM-WORKFLOW.md`、
+> `roadmind/ARCHITECTURE.md`（架构内容见本文件 §3）。

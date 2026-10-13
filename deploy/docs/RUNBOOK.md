@@ -4,8 +4,7 @@
 > 目标：任何人拿到仓库后，能在 5 分钟内把服务跑起来、换模型、加规则、排障。
 
 > 相关文档：[项目总说明](../../docs/PROJECT.md)（功能与能力边界）·
-> [API 契约](../../docs/roadmind/API.md) · [scene 结构](../../docs/roadmind/SCENE-SCHEMA.md) ·
-> [任务分工](../../docs/roadmind/TEAM-WORKFLOW.md)
+> [API 契约](../../docs/roadmind/API.md) · [scene 结构](../../docs/roadmind/SCENE-SCHEMA.md)
 
 ---
 

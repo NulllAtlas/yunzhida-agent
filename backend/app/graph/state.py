@@ -1,7 +1,7 @@
 """
 LangGraph 共享状态（State Schema）。
 
-对应文档《TEAM-ROLES.md》与《ARCHITECTURE.md》设计。
+对应文档：`docs/PROJECT.md` §3（智能体图与分层）。
 """
 from __future__ import annotations
 

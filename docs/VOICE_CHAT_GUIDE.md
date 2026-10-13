@@ -486,7 +486,7 @@ SILENCE_DURATION = 0.5    # 缩短时长
 - [MediaDevices API](https://developer.mozilla.org/zh-CN/docs/Web/API/MediaDevices)
 - [AudioContext API](https://developer.mozilla.org/zh-CN/docs/Web/API/AudioContext)
 - [云智达 API 文档](./roadmind/API.md)
-- [语音对话优化](./NEW_FEATURES_GUIDE.md#功能 2语音对话优化)
+- [项目功能总说明](./PROJECT.md)
 
 ---
 

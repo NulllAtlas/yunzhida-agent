@@ -57,11 +57,10 @@ docker compose up --build   # 前端 http://localhost:8080 ，后端 http://loca
 **先看** [`docs/PROJECT.md`](docs/PROJECT.md) —— 项目功能总说明：能做什么、怎么跑、
 能力边界与演示禁区（含"哪些功能默认不生效"，写材料前务必对照）。
 
-专题文档：
+专题文档（仓库只保留代码需要的文档）：
 
 | 文档 | 内容 |
 | --- | --- |
-| `docs/roadmind/ARCHITECTURE.md` | 多智能体架构设计与感知能力缺口 |
 | `docs/roadmind/SCENE-SCHEMA.md` | `scene.json` 结构与降级规则 |
 | `docs/roadmind/RULES.md` | 事故判责规则清单与实现状态 |
 | `docs/roadmind/RESPONSE-TEMPLATE.md` | 应急步骤标准模板 |
@@ -69,11 +68,7 @@ docker compose up --build   # 前端 http://localhost:8080 ，后端 http://loca
 | `docs/roadmind/API.md` | 后端接口契约 |
 | `docs/VOICE_CHAT_GUIDE.md` | 实时语音对话（电话模式）实现与协议 |
 | `docs/VOICE_TROUBLESHOOTING.md` | 语音电话排障 |
-| `docs/NEW_FEATURES_GUIDE.md` | 语音 / 长视频分段功能的配置与用法 |
 | `deploy/docs/RUNBOOK.md` | 部署 / 换模型 / 加规则 / 排障 |
-
-过程归档（赛前规划，其中排期已作废）：`docs/roadmind/` 下 `REQUIREMENTS.md`、
-`FEASIBILITY.md`、`TEAM-ROLES.md`、`TEAM-WORKFLOW.md`。
 
 ## 协作约定
 
