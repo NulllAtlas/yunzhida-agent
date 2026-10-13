@@ -98,25 +98,35 @@ async def _save_upload(
     命名：`{task_id}{tag}{suffix}`；违规（类型/大小）直接抛 ApiError 让前端看到原因，
     而不是悄悄吞掉文件让分析凭空少一份证据。
     """
-    name = Path(file.filename or "").name
-    lower = name.lower()
-    content_type = file.content_type or ""
-    is_media = content_type.startswith("image/" if kind == "照片" else "video/")
-    if not (is_media or lower.endswith(exts)):
-        raise ApiError(
-            "INVALID_FILE",
-            f"只接受{kind}文件（{'/'.join(e.lstrip('.') for e in exts)}）",
-            422,
-        )
-    data = await file.read()
-    if len(data) > max_mb * 1024 * 1024:
-        raise ApiError("FILE_TOO_LARGE", f"{kind}超过 {max_mb}MB 上限", 422)
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        name = Path(file.filename or "").name
+        lower = name.lower()
+        content_type = file.content_type or ""
+        is_media = content_type.startswith("image/" if kind == "照片" else "video/")
+        if not (is_media or lower.endswith(exts)):
+            raise ApiError(
+                "INVALID_FILE",
+                f"只接受{kind}文件（{'/'.join(e.lstrip('.') for e in exts)}）",
+                422,
+            )
+        data = await file.read()
+        if len(data) > max_mb * 1024 * 1024:
+            raise ApiError("FILE_TOO_LARGE", f"{kind}超过 {max_mb}MB 上限", 422)
 
-    suffix = Path(lower).suffix or exts[0]
-    save_path = Path(settings.upload_dir) / f"{task_id}{tag}{suffix}"
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    save_path.write_bytes(data)
-    return str(save_path)
+        suffix = Path(lower).suffix or exts[0]
+        save_path = Path(settings.upload_dir) / f"{task_id}{tag}{suffix}"
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        save_path.write_bytes(data)
+        logger.info(f"File saved: {save_path}")
+        return str(save_path)
+    except ApiError:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed to save upload: {e}")
+        raise ApiError("UPLOAD_FAILED", f"文件保存失败：{str(e)}", 500)
 
 
 @router.post("/submissions", response_model=TaskInfo, status_code=202)
