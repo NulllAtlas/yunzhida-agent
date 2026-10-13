@@ -8,6 +8,7 @@ from app.api.routers.police import router as police_router
 from app.api.routers.progress import router as progress_router
 from app.api.routers.stt import router as stt_router
 from app.api.routers.tts import router as tts_router
+from app.api.routers.voice_chat import router as voice_chat_router
 
 __all__ = [
     "auth_router",
@@ -19,4 +20,5 @@ __all__ = [
     "progress_router",
     "stt_router",
     "tts_router",
+    "voice_chat_router",
 ]

@@ -20,6 +20,7 @@ from app.algo.video_tracker import VideoTracker
 from app.core.config import settings
 from app.schemas.models import PhotoEvidence, Scene, SceneEvent, Vehicle, TrajectoryPoint
 from app.services.text_facts import extract_text_facts
+from app.services.video_llm import VideoSegmentProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -70,18 +71,59 @@ class PerceptionService:
                 vid_stride=settings.algo_vid_stride,
             )
         return self._tracker
+    
+    def _get_segment_processor(self) -> VideoSegmentProcessor:
+        """惰性加载视频分段处理器（长视频优化）。"""
+        return VideoSegmentProcessor(self._get_tracker())
 
     async def _track_video(self, scene_id: str, media_path: str) -> Scene:
         """真实感知：视频 → YOLO 检测+追踪 → scene dict → Scene。
 
         检测为 CPU/GPU 密集同步操作，放线程池执行避免阻塞事件循环。
         产出目录传给检测器：碰撞事件会生成标注了事故车辆识别框的关键帧。
+        
+        长视频优化：超过阈值时启用 LLM 智能分段处理。
         """
-        raw = await asyncio.to_thread(
-            self._get_tracker().perceive, media_path, settings.output_dir
-        )
-        raw["scene_id"] = scene_id
-        scene = Scene(**raw)
+        from app.services.video_clip import probe_video
+        
+        # 检查是否需要分段处理
+        duration, _, _, _ = probe_video(media_path)
+        
+        if duration > settings.long_video_threshold and not settings.use_mock:
+            # 长视频：启用 LLM 智能分段
+            logger.info(
+                "Long video detected (%.1fs > %ds), using LLM segmentation",
+                duration,
+                settings.long_video_threshold,
+            )
+            try:
+                processor = self._get_segment_processor()
+                raw = await processor.process_long_video(
+                    media_path,
+                    scene_id,
+                    settings.output_dir,
+                )
+                raw["scene_id"] = scene_id
+                scene = Scene(**raw)
+            except Exception as exc:
+                logger.exception(
+                    "LLM segmentation failed, falling back to full video: %s",
+                    exc,
+                )
+                # 降级：处理整个视频
+                raw = await asyncio.to_thread(
+                    self._get_tracker().perceive, media_path, settings.output_dir
+                )
+                raw["scene_id"] = scene_id
+                scene = Scene(**raw)
+        else:
+            # 短视频或 mock 模式：直接处理整个视频
+            raw = await asyncio.to_thread(
+                self._get_tracker().perceive, media_path, settings.output_dir
+            )
+            raw["scene_id"] = scene_id
+            scene = Scene(**raw)
+        
         # keyframe 存的是落盘文件名；转成 /outputs/ 下的可访问 URL
         # （main.py 把 outputs 目录静态挂载在 /outputs），前端直接展示
         for ev in scene.events:

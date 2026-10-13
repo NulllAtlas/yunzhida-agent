@@ -82,10 +82,20 @@ class Settings(BaseSettings):
 
     # 语音对话专用 LLM：短回复要快，实测 glm-4-9b ~0.6s / Qwen3.5-9B ~1.4s，
     # 远快于 deepseek-v4-flash（2.7~4.5s+）；仅语音模式（short=True）使用
-    voice_chat_model: str = "glm-4-9b"
+    voice_chat_model: str = "qwen3.5-397b-a17b"
     # 语音对话 LLM 硬超时：网关偶发抖动（实测有 90s 不返回），
     # 语音来回要压在几秒内，超时直接给提示语，不等
     voice_chat_timeout_s: float = 15.0
+    # 语音对话系统提示词（简短友好，引导用户清晰描述事故）
+    voice_chat_system_prompt: str = "你是一名交通事故辅助研判助手。请用简短清晰的口语回复（不超过 100 字），引导用户描述事故经过。关键信息包括：事故发生时间地点、是否有人员受伤、车辆受损情况。"
+
+    # ========== 视频 LLM 智能分段（长视频优化） ==========
+    # 长视频阈值（秒）：超过此时长的视频启用 LLM 智能分段
+    long_video_threshold: int = 300
+    # 视频分段 LLM 模型（需要支持视频输入的多模态模型）
+    video_llm_model: str = "qwen3.5-397b-a17b"
+    # 视频 LLM 调用超时（秒）：分段分析可能较慢
+    video_llm_timeout_s: float = 120.0
 
 
 settings = Settings()

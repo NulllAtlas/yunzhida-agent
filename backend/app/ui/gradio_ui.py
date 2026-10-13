@@ -154,7 +154,12 @@ footer { visibility: hidden !important; height: 0 !important; padding: 0 !import
 .call-status { margin: 0 !important; font-size: 13px; color: #374151; }
 .call-status p { margin: 0; }
 .voice-row .reply-audio { max-height: 52px; }
-/* 通话视图：清澈青色海水背景 + 青黑虎鲸（js 渲染，默认隐藏） */
+/* 通话视图行：虎鲸在左，对话文字在右 */
+.call-view-row {
+    gap: 16px !important;
+    margin: 6px 0;
+}
+/* 虎鲸电话视图：清澈青色海水背景 + 青黑虎鲸（js 渲染，默认隐藏） */
 #rm-call-view {
     display: none; align-items: center; justify-content: center;
     gap: 20px; padding: 18px 14px 12px; margin: 6px 0;
@@ -164,6 +169,25 @@ footer { visibility: hidden !important; height: 0 !important; padding: 0 !import
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 4px 20px rgba(103, 232, 249, .25);
 }
 #rm-call-view.on { display: flex; }
+/* 对话文字显示区（虎鲸右边） */
+.call-transcript {
+    flex: 1;
+    min-width: 0;
+}
+.transcript-box {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(207, 250, 254, 0.9));
+    border: 2px solid rgba(103, 232, 249, 0.5);
+    border-radius: 12px !important;
+    padding: 12px !important;
+    font-size: 14px !important;
+    line-height: 1.6 !important;
+    box-shadow: 0 2px 8px rgba(103, 232, 249, 0.15);
+    transition: all 0.3s ease;
+}
+.transcript-box:focus {
+    border-color: rgba(45, 212, 191, 0.6);
+    box-shadow: 0 4px 16px rgba(45, 212, 191, 0.25);
+}
 .rm-avatar { position: relative; width: 120px; height: 100px; flex: 0 0 auto; }
 .rm-ring {
     position: absolute; inset: -7px; border-radius: 50%;
@@ -964,7 +988,19 @@ def build_demo() -> gr.Blocks:
                     )
                 # 通话视图：拨通后 js 在此渲染语音助手卡通形象 + 声音频率动态；
                 # 组件值恒定，js 只操作自己创建的子节点（不碰 Gradio 组件 DOM）
-                gr.HTML('<div id="rm-call-view"></div>', elem_classes="call-view")
+                with gr.Row(elem_classes="call-view-row"):
+                    # 虎鲸电话视图（左边）
+                    gr.HTML('<div id="rm-call-view"></div>', elem_classes="call-view")
+                    # 实时对话文字显示区（右边）- 显示转写文字和回复文字
+                    with gr.Column(elem_classes="call-transcript"):
+                        transcript_text = gr.Textbox(
+                            label="💬 实时对话文字",
+                            placeholder="对话文字将显示在这里...",
+                            lines=8,
+                            max_lines=12,
+                            interactive=False,
+                            elem_classes="transcript-box",
+                        )
                 # 快捷提问：对话界面与输入框之间，点击填入对话框
                 with gr.Row(elem_classes="quick-asks"):
                     quick_btns = [gr.Button(q, size="sm", scale=1) for q in _QUICK_ASKS]
@@ -1170,10 +1206,13 @@ def build_demo() -> gr.Blocks:
                             is_accident = acc not in ("", "unknown", "非事故")
                             audio = _speak(msg.get("content", ""), voice)
                             if is_accident:
+                                # 自动进入语音对话模式，并在对话文字显示区显示事故信息
                                 yield ([*msgs], gr.update(value=None), [*msgs],
                                        gr.update(value=audio),
                                        gr.update(value="📵"), True,
                                        f"📞 检测到事故（{acc}），正在语音播报研判结果…")
+                                # 在对话文字显示区添加事故播报文字（JavaScript 会在播报结束时添加）
+                                # 这里通过 call_status 传递信息
                             else:
                                 yield ([*msgs], gr.update(value=None), [*msgs],
                                        gr.update(value=audio),
@@ -1405,6 +1444,13 @@ def build_demo() -> gr.Blocks:
                                     C.status('📞 已接通 — 直接说话，停顿即自动发送');
                                     return;
                                 }
+                                // 更新对话文字显示区（虎鲸右边）- 显示用户说的话
+                                const transcriptBox = document.querySelector('.transcript-box textarea');
+                                if (transcriptBox) {
+                                    const currentTime = new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'});
+                                    transcriptBox.value += `[${currentTime}] 您：${full}\n`;
+                                    transcriptBox.scrollTop = transcriptBox.scrollHeight;
+                                }
                                 C.setFace('think');
                                 const ta = document.querySelector('.input-row textarea');
                                 if (!ta) return;
@@ -1579,6 +1625,15 @@ def build_demo() -> gr.Blocks:
                             }
                             const host = C.view();
                             if (host) host.classList.add('on');
+                            
+                            // 启动时更新对话文字显示区
+                            const transcriptBox = document.querySelector('.transcript-box textarea');
+                            if (transcriptBox) {
+                                const currentTime = new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'});
+                                transcriptBox.value += `[${currentTime}] 系统：语音对话已启动，请直接说话\\n`;
+                                transcriptBox.scrollTop = transcriptBox.scrollHeight;
+                            }
+                            
                             const ctx = new (window.AudioContext
                                              || window.webkitAudioContext)();
                             C.ctx = ctx;
@@ -1641,6 +1696,14 @@ def build_demo() -> gr.Blocks:
                             if (e.target.matches('.reply-audio audio')) {
                                 C.paused = false;
                                 C.setFace('listen');
+                                // 播报完成，更新对话文字显示区 - 显示助手回复
+                                const transcriptBox = document.querySelector('.transcript-box textarea');
+                                const replyText = e.target.getAttribute('data-reply-text') || '语音回复';
+                                if (transcriptBox) {
+                                    const currentTime = new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'});
+                                    transcriptBox.value += `[${currentTime}] 助手：${replyText}\n\n`;
+                                    transcriptBox.scrollTop = transcriptBox.scrollHeight;
+                                }
                             }
                         }, true);
                         document.addEventListener('pause', (e) => {
@@ -1692,6 +1755,15 @@ def build_demo() -> gr.Blocks:
                     const C = window.RMCall;
                     if (!C || !m) return;
                     if (C.stream) return;
+                    
+                    // 自动进入语音对话时，在对话文字显示区添加提示
+                    const transcriptBox = document.querySelector('.transcript-box textarea');
+                    if (transcriptBox) {
+                        const currentTime = new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'});
+                        transcriptBox.value += `[${currentTime}] 系统：检测到事故，自动进入语音对话模式\\n`;
+                        transcriptBox.scrollTop = transcriptBox.scrollHeight;
+                    }
+                    
                     C.start();
                 }"""
                 call_btn.click(toggle_call, [call_mode],

@@ -340,6 +340,57 @@ class LLMService:
             "confidence": confidence,
         }
 
+    async def voice_chat(self, user_message: str, conversation_history: list[dict] | None = None) -> str:
+        """语音对话专用接口：短回复、快速响应。
+        
+        Args:
+            user_message: 用户语音转文字后的消息
+            conversation_history: 可选的对话历史（用于多轮对话）
+        
+        Returns:
+            简短的口语化回复（不超过 100 字）
+        """
+        if settings.use_mock or not settings.moma_base_url:
+            # Mock 模式：简单回复
+            return "收到您的消息。请问还有什么可以帮助您的？"
+        
+        try:
+            # 构建消息
+            messages = [
+                {
+                    "role": "system",
+                    "content": settings.voice_chat_system_prompt,
+                }
+            ]
+            
+            # 添加对话历史（如果提供）
+            if conversation_history:
+                messages.extend(conversation_history[-6:])  # 限制最近 6 条
+            
+            # 添加当前消息
+            messages.append({
+                "role": "user",
+                "content": user_message,
+            })
+            
+            # 调用 LLM（使用语音专用模型）
+            response = await self.call_chat(
+                messages=messages,
+                model=settings.voice_chat_model,
+                temperature=0.7,  # 稍微提高随机性，让回复更自然
+                timeout_s=settings.voice_chat_timeout_s,
+            )
+            
+            # 截断过长回复（语音朗读限制）
+            if len(response) > 100:
+                response = response[:97] + "..."
+            
+            return response
+            
+        except Exception as exc:
+            logger.warning("Voice chat failed: %s", exc)
+            return "抱歉，我暂时无法响应。请您稍后再试。"
+    
     async def draft_response(self, accident_type: str) -> dict:
         """应急方案模板（规则基）。MVP 阶段直接返回模板，迭代接 LLM 润色。"""
         templates = {

@@ -1,29 +1,11 @@
 """M3 判定节点：scene + 检索 → judgment。"""
 from __future__ import annotations
 
+from app.algo.accident_gate import resolve_gate
 from app.algo.scene_summary import build_scene_summary, describe_text_facts
-from app.core.config import settings
 from app.graph.state import State
 from app.schemas.models import Judgment, PartyRole, Responsibility
 from app.services.llm import llm_service
-
-
-def _accident_gate(scene):
-    """确定性事故门控（仅视频感知来源）：速度与碰撞置信度双门槛。
-
-    "是否真实事故"由代码硬门槛判定（稳定、可复现），不交给 LLM 波动；
-    未达门槛直接输出"非事故"，达标才进入 LLM 归类判责。
-    返回 (是否通过, 原因说明)。
-    """
-    max_speed = max((v.max_speed_kmh for v in scene.vehicles), default=0.0)
-    top_conf = max(
-        (e.confidence for e in scene.events if e.type == "collision"), default=0.0
-    )
-    if max_speed < settings.gate_min_speed_kmh:
-        return False, f"最高目标速度仅 {max_speed:.1f}km/h（门槛 {settings.gate_min_speed_kmh}）"
-    if top_conf < settings.gate_min_event_conf:
-        return False, f"最高碰撞事件置信度仅 {top_conf:.2f}（门槛 {settings.gate_min_event_conf}）"
-    return True, ""
 
 
 def _non_accident_judgment(scene_id: str, reason: str) -> Judgment:
@@ -38,8 +20,14 @@ def _non_accident_judgment(scene_id: str, reason: str) -> Judgment:
     )
 
 
-async def judge_node(state: State) -> State:
-    state["step"] = "judging"
+async def judge_node(state: State) -> dict:
+    """返回**部分更新**（只含 judgment）。
+
+    本节点与 respond 是并行分支：LangGraph 把返回值整体当作要提交的更新，
+    若像顺序节点那样返回完整 state，两条分支就会在同一超步里重复写 case_id/scene
+    等键，直接被判为 InvalidUpdateError。同理也不再写 state["step"]——
+    进度由 tasks.py 的 _NODE_STEP 按节点名驱动，该字段无读者。
+    """
     text = state.get("input_text", "")
     scene = state.get("scene")
     # 只有真实视频检测结果才带 scene 证据：text_fallback（检测失败降级）没有检测数据，
@@ -56,21 +44,19 @@ async def judge_node(state: State) -> State:
         build_scene_summary(scene.model_dump(), fallback_text="") if detected else ""
     )
 
-    if is_video:
-        # 确定性门控：先由代码判定是否真实事故，未达标不走 LLM
-        passed, reason = _accident_gate(scene)
-        if not passed:
-            judgment = _non_accident_judgment(state.get("case_id", "case"), reason)
-            # 门控只看视频的运动学证据；用户另外附了现场照片时不能装作没看见，
-            # 如实提示一句让人工复核（不改变判定）
-            photo_targets = sum(len(p.targets) for p in scene.photos)
-            if photo_targets:
-                judgment.reasoning.append(
-                    f"另随附现场照片检出 {photo_targets} 个目标，未被视频门控采纳，建议人工复核"
-                )
-            state["judgment"] = judgment
-            return state
-
+    # 确定性门控：先由代码判定是否真实事故，未达标不走 LLM。
+    # 结论优先取 gate 节点写入的那份（judge/respond 并行分支共用），单独调用本节点时就地计算。
+    gate = resolve_gate(state)
+    if gate["applicable"] and not gate["passed"]:
+        judgment = _non_accident_judgment(state.get("case_id", "case"), gate["reason"])
+        # 门控只看视频的运动学证据；用户另外附了现场照片时不能装作没看见，
+        # 如实提示一句让人工复核（不改变判定）
+        photo_targets = sum(len(p.targets) for p in scene.photos)
+        if photo_targets:
+            judgment.reasoning.append(
+                f"另随附现场照片检出 {photo_targets} 个目标，未被视频门控采纳，建议人工复核"
+            )
+        return {"judgment": judgment}
     # 用户文字与场景证据是两份独立输入，必须同时进 prompt。
     # 原先是 `scene_text = text or 场景摘要`：只要有视频场景，用户补充的描述就被丢掉，
     # 于是"视频看不清、我补一句对方闯红灯"这种补充数据链的用法完全失效。
@@ -100,7 +86,7 @@ async def judge_node(state: State) -> State:
             "以下结论基于文字推断，请人工复核或补录现场要素",
             *reasoning,
         ]
-    state["judgment"] = Judgment(
+    return {"judgment": Judgment(
         scene_id=state.get("case_id", "case"),
         accident_type=str(raw.get("accident_type", "")),
         parties=[PartyRole(**p) for p in (raw.get("parties") or [])],
@@ -109,5 +95,4 @@ async def judge_node(state: State) -> State:
         basis=raw["basis"],
         reasoning=reasoning,
         confidence=confidence,
-    )
-    return state
+    )}

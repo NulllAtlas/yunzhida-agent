@@ -35,6 +35,7 @@ _STEP_MAP: dict[str, tuple[str, float]] = {
     "pending": ("pending", 0.0),
     "perceiving": ("perceiving", 0.2),
     "retrieving": ("retrieving", 0.4),
+    "gating": ("gating", 0.5),
     "judging": ("judging", 0.6),
     "responding": ("responding", 0.8),
     "aggregating": ("aggregating", 0.9),
@@ -45,6 +46,7 @@ _STEP_MAP: dict[str, tuple[str, float]] = {
 _NODE_STEP: dict[str, str] = {
     "perceive": "perceiving",
     "retrieve": "retrieving",
+    "accident_gate": "gating",
     "judge": "judging",
     "respond": "responding",
     "aggregate": "aggregating",

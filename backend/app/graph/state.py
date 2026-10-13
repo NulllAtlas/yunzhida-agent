@@ -29,6 +29,9 @@ class RoadMindState(TypedDict, total=False):
     scene: Optional[Scene]
     # M2 检索增强
     retrieved: list[RetrievedDoc]
+    # 确定性事故门控结论（gate 节点写入，judge/respond 两条并行分支共同消费）
+    # 形如 {"applicable": bool, "passed": bool, "reason": str}
+    gate: Optional[dict]
     # M3 判定结果
     judgment: Optional[Judgment]
     # M4 应急结果

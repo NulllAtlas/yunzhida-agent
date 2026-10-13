@@ -21,6 +21,7 @@ from app.api import (
     progress_router,
     stt_router,
     tts_router,
+    voice_chat_router,
 )
 from app.core.config import settings
 from app.core.db import init_db
@@ -58,6 +59,7 @@ app.include_router(config_router)    # 运行时切换大模型（界面右上�
 app.include_router(chat_router)      # 对话接口（多轮对话透传 MoMA）
 app.include_router(tts_router)       # 文本转语音（语音对话，回复朗读）
 app.include_router(stt_router)       # 语音输入（语音对话，麦克风转文字）
+app.include_router(voice_chat_router)  # 实时语音对话（电话模式，WebSocket 全双工）
 
 # 事故车辆标注关键帧：视频感知后落在 outputs 目录，这里静态暴露成 /outputs/*，
 # 界面直接用 URL 展示标注图。必须在 Gradio mount("/") 之前注册，否则被根路径接管

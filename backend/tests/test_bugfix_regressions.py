@@ -6,7 +6,9 @@
 2. 门控判"非事故"后仍产出完整应急方案；
 3. 门控速度只算 x 方向，纵向运动目标速度恒为 0 而被误判为非事故；
 4. 视频检测失败被静默包装成"确定结论"；
-5. 后台任务未持强引用（由 TaskManager._bg_tasks 的持有方式保证，见 tasks.py）。
+5. 后台任务未持强引用（由 TaskManager._bg_tasks 的持有方式保证，见 tasks.py）；
+6. judge 与 respond 改为并行后不再互相依赖：门控结论由 gate 节点统一产出，
+   应急类型改由碰撞几何/场景证据推断，不再消费 judgment。
 """
 from __future__ import annotations
 
@@ -60,15 +62,20 @@ def test_respond_maps_video_pedestrian_collision(monkeypatch):
 
     修复前只匹配 e.type == "vehicle_pedestrian"，视频事件类型永远匹配不上，
     会落到通用模板并丢掉 120 急救步骤。
+    场景带速度与碰撞置信度以通过确定性事故门控——未过门控属于"非事故"，
+    走的是下面 test_respond_produces_no_plan_for_non_accident 那条分支。
     """
     monkeypatch.setattr(settings, "use_mock", True)
     scene = _scene(
         "video",
         events=[SceneEvent(time=1.0, type="collision", participants=[1, 2], confidence=0.9)],
-        vehicles=[Vehicle(id=1, type="car"), Vehicle(id=2, type="pedestrian")],
+        vehicles=[
+            Vehicle(id=1, type="car", max_speed_kmh=40.0),
+            Vehicle(id=2, type="pedestrian", max_speed_kmh=5.0),
+        ],
     )
-    state = {"case_id": "t1", "input_text": "", "scene": scene,
-             "judgment": _judgment("普通碰撞"), "step": ""}
+    # M4 与 M3 并行，不再消费 judgment：类型完全由场景证据推断
+    state = {"case_id": "t1", "input_text": "", "scene": scene, "step": ""}
 
     out = _run(respond_node(state))
 
@@ -78,19 +85,51 @@ def test_respond_maps_video_pedestrian_collision(monkeypatch):
     assert any("120" in s.action for s in out["response"].steps)
 
 
-def test_respond_uses_judgment_for_rear_end(monkeypatch):
-    """两车碰撞时类型靠 M3 判定结果（追尾）传递，M4 必须消费它。"""
+def test_respond_infers_rear_end_from_collision_geometry(monkeypatch):
+    """两车同向碰撞＝追尾形态，M4 必须给出 rear_end 模板而不是通用模板。
+
+    原实现靠 M3 的判定结果（accident_type="追尾"）沿顺序边向下游传递类型。
+    M4 改为与 M3 并行后拿不到 judgment，改由感知层的碰撞几何推断
+    （双方航向夹角 <30° 判为同向，见 algo/video_tracker.collision_geometry）。
+    """
     monkeypatch.setattr(settings, "use_mock", True)
     scene = _scene(
         "video",
-        events=[SceneEvent(time=1.0, type="collision", participants=[1, 2], confidence=0.9)],
-        vehicles=[Vehicle(id=1, type="car"), Vehicle(id=2, type="truck")],
+        events=[SceneEvent(time=1.0, type="collision", participants=[1, 2],
+                           confidence=0.9, geometry="same_direction")],
+        vehicles=[
+            Vehicle(id=1, type="car", max_speed_kmh=60.0),
+            Vehicle(id=2, type="truck", max_speed_kmh=35.0),
+        ],
     )
-    state = {"case_id": "t1", "input_text": "", "scene": scene,
-             "judgment": _judgment("追尾"), "step": ""}
+    state = {"case_id": "t1", "input_text": "", "scene": scene, "step": ""}
 
     out = _run(respond_node(state))
 
+    assert out["response"].accident_type == "rear_end"
+
+
+def test_respond_falls_back_to_text_when_geometry_unknown(monkeypatch):
+    """一方静止时碰撞几何为 unknown（追尾的常见情形：前车已刹停），靠用户文字兜住类型。
+
+    如实记录这条边界：纯视频、无文字补充、前车静止的追尾会落到通用模板，
+    处置步骤仍完整，仅第 4 步措辞与保险话术偏通用。
+    """
+    monkeypatch.setattr(settings, "use_mock", True)
+    scene = _scene(
+        "video",
+        events=[SceneEvent(time=1.0, type="collision", participants=[1, 2],
+                           confidence=0.9, geometry="unknown")],
+        vehicles=[
+            Vehicle(id=1, type="car", max_speed_kmh=60.0),
+            Vehicle(id=2, type="truck", max_speed_kmh=0.0),
+        ],
+    )
+    state = {"case_id": "t1", "input_text": "前车急刹我追尾了", "scene": scene, "step": ""}
+
+    out = _run(respond_node(state))
+
+    # 几何失效，但文字里的"追尾"仍能救回来
     assert out["response"].accident_type == "rear_end"
 
 
@@ -98,11 +137,14 @@ def test_respond_uses_judgment_for_rear_end(monkeypatch):
 
 
 def test_respond_produces_no_plan_for_non_accident(monkeypatch):
-    """门控判为非事故时不应给出双闪/三角牌等处置步骤（自相矛盾）。"""
+    """门控判为非事故时不应给出双闪/三角牌等处置步骤（自相矛盾）。
+
+    依据是 gate 的确定性结论（速度/碰撞置信度双门槛未达），不再依赖 M3 判定结果——
+    并行时 M3 可能还没跑完，靠它传递门控结论是不可靠的。
+    """
     monkeypatch.setattr(settings, "use_mock", True)
     scene = _scene("video", events=[], vehicles=[Vehicle(id=1, type="car")])
-    state = {"case_id": "t1", "input_text": "", "scene": scene,
-             "judgment": _judgment("非事故"), "step": ""}
+    state = {"case_id": "t1", "input_text": "", "scene": scene, "step": ""}
 
     out = _run(respond_node(state))
 
@@ -468,7 +510,14 @@ def test_graph_emits_node_start_events(monkeypatch):
                 starts.append(event["name"])
         return starts
 
-    assert asyncio.run(collect()) == ["perceive", "retrieve", "judge", "respond", "aggregate"]
+    starts = asyncio.run(collect())
+
+    # accident_gate 是 judge/respond 的公共前置；这两条分支并行，
+    # 各自的启动先后不作要求，故只断言集合而非顺序。
+    assert starts[:3] == ["perceive", "retrieve", "accident_gate"]
+    assert sorted(starts[3:5]) == ["judge", "respond"]
+    assert starts[5] == "aggregate"
+    assert len(starts) == 6
 
 
 # ---------------- 10. 信号灯颜色与碰撞形态 ----------------
@@ -729,3 +778,55 @@ def test_refine_falls_back_to_template_on_timeout(monkeypatch):
     template = asyncio.run(svc.draft_response("vehicle_pedestrian"))
 
     assert asyncio.run(svc.refine_response("vehicle_pedestrian", "撞到行人", template)) == template
+
+
+# ---------------- 6. 判定与应急并行（gate fan-out） ----------------
+
+
+def test_graph_fans_out_judge_and_respond(monkeypatch):
+    """gate 之后 judge 与 respond 并行：两条分支的结果都要落进同一次运行的 state。
+
+    并行分支各写不同键（judgment / response）。把顺序边改成 fan-out 后最容易踩的坑
+    就是合并时互相覆盖，这里直接跑整图验证两者都在。
+    """
+    from app.graph.builder import graph
+
+    monkeypatch.setattr(settings, "use_mock", True)
+    state = {
+        "case_id": "t-parallel",
+        "input_text": "同车道追尾，后车未保持安全距离",
+        "retrieved": [],
+        "step": "",
+    }
+
+    out = _run(graph.ainvoke(state))
+
+    assert out["judgment"] is not None
+    assert out["response"] is not None
+    assert out["result"]["judgment"] is not None
+    assert out["result"]["response"] is not None
+
+
+def test_gate_node_writes_shared_conclusion():
+    """gate 节点单独跑时，要把结论写进 state 供两条并行分支消费。"""
+    from app.graph.nodes import gate_node
+
+    scene = _scene(
+        "video",
+        events=[SceneEvent(time=1.0, type="collision", participants=[1, 2], confidence=0.9)],
+        vehicles=[Vehicle(id=1, type="car", max_speed_kmh=50.0)],
+    )
+
+    out = _run(gate_node({"case_id": "t1", "scene": scene}))
+
+    assert out["gate"] == {"applicable": True, "passed": True, "reason": ""}
+
+
+def test_gate_node_skips_non_video_sources():
+    """降级/文字/照片场景没有运动学证据，门控不应适用（不得判成"非事故"）。"""
+    from app.graph.nodes import gate_node
+
+    out = _run(gate_node({"case_id": "t1", "scene": _scene("text_fallback", [], [])}))
+
+    assert out["gate"]["applicable"] is False
+    assert out["gate"]["passed"] is True
