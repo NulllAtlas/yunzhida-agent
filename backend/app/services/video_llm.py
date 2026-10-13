@@ -466,13 +466,32 @@ class VideoSegmentProcessor:
             scene = result.scene
             time_offset = result.segment.start
             
-            # 合并车辆（重编号）
+            # 合并车辆（重编号）- 处理 Pydantic 模型或字典
             for vehicle in scene.get("vehicles", []):
-                new_vehicle = vehicle.copy()
-                new_vehicle["id"] = vehicle["id"] + vehicle_id_offset
-                # 修正轨迹时间戳
-                for point in new_vehicle.get("trajectory", []):
-                    point["t"] += time_offset
+                # 兼容 Pydantic 模型和字典两种格式
+                if hasattr(vehicle, 'dict'):
+                    # Pydantic 模型实例
+                    vehicle_dict = vehicle.dict()
+                else:
+                    # 字典
+                    vehicle_dict = vehicle
+                new_vehicle = vehicle_dict.copy()
+                new_vehicle["id"] = vehicle_dict.get("id", 0) + vehicle_id_offset
+                # 修正轨迹时间戳（保持 Pydantic 兼容格式）
+                new_trajectory = []
+                for point in vehicle_dict.get("trajectory", []):
+                    # 同样兼容 Pydantic 模型和字典
+                    point_data = point.dict() if hasattr(point, 'dict') else point
+                    new_point = {
+                        "t": float(point_data.get("t", 0.0)) + time_offset,
+                        "x": float(point_data.get("x", 0.5)),
+                        "y": float(point_data.get("y", 0.5)),
+                        "w": float(point_data.get("w", 0.0)),
+                        "h": float(point_data.get("h", 0.0)),
+                        "speed_kmh": 0.0,
+                    }
+                    new_trajectory.append(new_point)
+                new_vehicle["trajectory"] = new_trajectory
                 merged_vehicles.append(new_vehicle)
             
             vehicle_id_offset += len(scene.get("vehicles", [])) or 1

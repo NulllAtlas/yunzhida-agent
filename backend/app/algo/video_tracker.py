@@ -264,7 +264,8 @@ class VideoTracker:
                         far = max(far, d)
                         if d < md:
                             md, bt, bq = d, x, y
-                if bt is None or md >= 0.08:
+                # 检查是否找到有效的碰撞点
+                if bt is None or bq is None or md >= 0.08:
                     continue
                 # 碰撞意味着"接近"：两者必须曾经明显分开过。
                 # 全程贴在一起的目标不构成碰撞——要么是同一辆车被追踪成了两条轨迹
@@ -285,12 +286,14 @@ class VideoTracker:
                 confidence = round(min(1.0, 1.0 - md * 10), 2)
                 if confidence < min_confidence:
                     continue
-                events.append({"time": round((bt["t"] + bq["t"]) / 2, 2),
+                # 计算碰撞时间（使用安全的字典访问）
+                collision_time = round((bt.get("t", 0.0) + bq.get("t", 0.0)) / 2, 2)
+                events.append({"time": collision_time,
                                "type": "collision" if overlap else "near_miss",
                                "participants": [ids[i], ids[j]],
                                "confidence": confidence,
                                "geometry": collision_geometry(p, q),
-                               # 碰撞时刻双方的识别框（归一化中心+宽高）：
+                               # 碰撞时刻双方的识别框（归一化中心 + 宽高）：
                                # 事故车辆是谁、框在哪，事件本身就带着
                                "boxes": [
                                    {"id": ids[i], "type": p.get("type", "car"),
@@ -438,9 +441,20 @@ class VideoTracker:
             if track_types[tid] in _SCENE_ELEMENT_TYPES:
                 continue
             ms = _max_motion_speed(td["trajectory"])
+            # 转成 TrajectoryPoint 兼容格式（确保所有必需字段都存在）
+            trajectory_points = []
+            for pt in td["trajectory"]:
+                trajectory_points.append({
+                    "t": float(pt.get("t", 0.0)),
+                    "x": float(pt.get("x", 0.5)),
+                    "y": float(pt.get("y", 0.5)),
+                    "w": float(pt.get("w", 0.0)),
+                    "h": float(pt.get("h", 0.0)),
+                    "speed_kmh": 0.0,
+                })
             vehicles.append({"id": tid,
                              "type": _CLS_TO_SCENE_TYPE.get(track_types[tid], "other"),
-                             "trajectory": td["trajectory"], "max_speed_kmh": round(ms, 1)})
+                             "trajectory": trajectory_points, "max_speed_kmh": round(ms, 1)})
 
         return {
             "$schema": "scene.v1.json",
