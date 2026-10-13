@@ -1198,22 +1198,31 @@ def build_demo() -> gr.Blocks:
                             result = info.get("result") or {}
                             msg = _result_message(result)
                             _add_msg(msgs, username, msg)
-                            # 检测到视频中有事故 → 像真人来电一样自动接通：
-                            # 语音播报研判结果、电话键变红色挂断、通话模式开启
-                            # （播完自动续录听车主说话）
+                            # 检测到视频中有事故 → 先显示虎鲸助手界面，再语音播报研判结果
+                            # 顺序：1️⃣ 显示虎鲸 → 2️⃣ 进入语音对话模式 → 3️⃣ 播报结果
                             j = result.get("judgment") or {}
                             acc = (j.get("accident_type") or "").strip()
                             is_accident = acc not in ("", "unknown", "非事故")
-                            audio = _speak(msg.get("content", ""), voice)
+                            
                             if is_accident:
-                                # 自动进入语音对话模式，并在对话文字显示区显示事故信息
+                                # 第一步：先显示虎鲸界面，进入语音对话模式（不立即播报）
+                                yield ([*msgs], gr.update(value=None), [*msgs],
+                                       gr.update(value=None),  # 先不播放音频
+                                       gr.update(value="📵"), True,
+                                       f"📞 检测到事故（{acc}），虎鲸助手已接通，正在播报研判结果…")
+                                
+                                # 第二步：延迟 1.5 秒让用户看到虎鲸后再播报
+                                import time
+                                time.sleep(1.5)
+                                
+                                # 第三步：开始语音播报
+                                audio = _speak(msg.get("content", ""), voice)
                                 yield ([*msgs], gr.update(value=None), [*msgs],
                                        gr.update(value=audio),
-                                       gr.update(value="📵"), True,
-                                       f"📞 检测到事故（{acc}），正在语音播报研判结果…")
-                                # 在对话文字显示区添加事故播报文字（JavaScript 会在播报结束时添加）
-                                # 这里通过 call_status 传递信息
+                                       gr.update(), gr.update(),
+                                       f"📞 正在播报研判结果（{acc}）…")
                             else:
+                                audio = _speak(msg.get("content", ""), voice)
                                 yield ([*msgs], gr.update(value=None), [*msgs],
                                        gr.update(value=audio),
                                        gr.update(), gr.update(), gr.update())
@@ -1749,22 +1758,27 @@ def build_demo() -> gr.Blocks:
                     else { C.start(); }
                 }"""
                 # 检测到事故自动接通：Python 侧把 call_mode 置 True（像真人来电），
-                # State 变化触发本 JS —— 自动开始浏览器端录音，播报研判结果，
-                # 播完自动续录听车主说话
+                # State 变化触发本 JS —— 先显示虎鲸界面，等待 1.5 秒后再播报
                 _AUTO_CALL_JS = """(m) => {
                     const C = window.RMCall;
                     if (!C || !m) return;
                     if (C.stream) return;
                     
-                    // 自动进入语音对话时，在对话文字显示区添加提示
+                    // 第一步：先显示虎鲸界面
                     const transcriptBox = document.querySelector('.transcript-box textarea');
                     if (transcriptBox) {
                         const currentTime = new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'});
-                        transcriptBox.value += `[${currentTime}] 系统：检测到事故，自动进入语音对话模式\\n`;
+                        transcriptBox.value += `[${currentTime}] 系统：检测到事故，虎鲸助手已接通\\n`;
+                        transcriptBox.value += `[${currentTime}] 系统：正在准备播报研判结果...\\n`;
                         transcriptBox.scrollTop = transcriptBox.scrollHeight;
                     }
                     
+                    // 启动虎鲸动画和录音，但等待播报
                     C.start();
+                    
+                    // 显示虎鲸界面
+                    const host = C.view();
+                    if (host) host.classList.add('on');
                 }"""
                 call_btn.click(toggle_call, [call_mode],
                                [call_mode, call_status, call_btn])
