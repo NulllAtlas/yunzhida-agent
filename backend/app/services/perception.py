@@ -19,6 +19,7 @@ from app.algo.photo_detector import photo_detector
 from app.algo.video_tracker import VideoTracker
 from app.core.config import settings
 from app.schemas.models import PhotoEvidence, Scene, SceneEvent, Vehicle, TrajectoryPoint
+from app.services.scene_elements import enrich_scene_with_vision
 from app.services.text_facts import extract_text_facts
 from app.services.video_llm import VideoSegmentProcessor
 
@@ -103,6 +104,9 @@ class PerceptionService:
                     scene_id,
                     settings.output_dir,
                 )
+                # 场景要素识别放在 try 内、Scene 构造之前：认不出会原样返回，
+                # 而分段结果结构不对时仍然退回整段检测（与改造前的行为一致）
+                raw = await enrich_scene_with_vision(raw, media_path)
                 raw["scene_id"] = scene_id
                 scene = Scene(**raw)
             except Exception as exc:
@@ -114,6 +118,7 @@ class PerceptionService:
                 raw = await asyncio.to_thread(
                     self._get_tracker().perceive, media_path, settings.output_dir
                 )
+                raw = await enrich_scene_with_vision(raw, media_path)
                 raw["scene_id"] = scene_id
                 scene = Scene(**raw)
         else:
@@ -121,6 +126,10 @@ class PerceptionService:
             raw = await asyncio.to_thread(
                 self._get_tracker().perceive, media_path, settings.output_dir
             )
+            # 路口场景要素识别（大模型看关键帧）：认出信号灯归属方向/人行横道/标线/
+            # 标志牌就补进 scene；认不出（模型看不见图、账号未开通、超时）原样返回，
+            # 链路退回 YOLO + HSV 的原有模式 —— 增强不生效也绝不能拖垮研判
+            raw = await enrich_scene_with_vision(raw, media_path)
             raw["scene_id"] = scene_id
             scene = Scene(**raw)
         

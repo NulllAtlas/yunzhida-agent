@@ -64,17 +64,63 @@ def describe_lights(scene: dict) -> str:
 
     同一路口不同方向的红绿灯同时存在（实测一个路口能同时检出红灯与绿灯），
     所以多色并存时必须明说——否则模型会把"存在红灯"当成"某方闯红灯"的证据。
+
+    大模型看关键帧给出的"面向镜头那组灯"是 YOLO+HSV 给不出的**归属**信息：
+    多色并存时它能把灯与方向对上，因此这时不再说"无法判定某一方"。
     """
     aggregate = scene.get("traffic_light", "unknown")
     lights = scene.get("traffic_lights") or []
+    vision = scene.get("vision") or {}
+    self_light = vision.get("self_light") or "unknown"
+    mine = ""
+    if self_light not in ("", "unknown"):
+        mine = ("；面向镜头（我方行进方向）的那组为 "
+                f"{_LIGHT_LABEL.get(self_light, self_light)}"
+                "（大模型看视频帧识别，已把灯与方向对上）")
     if aggregate == "mixed":
         kinds = sorted({l.get("state") for l in lights
                         if l.get("state") not in (None, "unknown")})
-        return (f"路口信号灯: 同时检出 {' 与 '.join(kinds)}"
-                "（不同方向并存，无法据此判定某一方闯红灯）")
+        base = f"路口信号灯: 同时检出 {' 与 '.join(kinds)}（不同方向并存）"
+        return base + (mine if mine else "，无法据此判定某一方闯红灯")
     if aggregate == "unknown":
-        return "路口信号灯: 未能识别"
-    return f"路口信号灯: {aggregate}"
+        return "路口信号灯: YOLO 未能识别" + mine
+    return f"路口信号灯: {aggregate}" + mine
+
+
+_VISIBILITY_LABEL = {"day": "白天", "night": "夜间", "dusk": "黄昏",
+                     "rain": "雨天", "fog": "雾天"}
+
+
+def describe_vision(scene: dict) -> str:
+    """大模型看关键帧认出的路口要素：人行横道 / 路面标线 / 标志牌 / 天气光线。
+
+    信号灯归属在 `describe_lights` 里表述（和检测结果并排），这里只管
+    YOLO 类别里没有的要素。模型看不见图或什么都没认出时返回空串，
+    调用方据此不加这一段（不塞空话）。
+    """
+    v = scene.get("vision") or {}
+    if not v:
+        return ""
+    parts: list[str] = []
+    crosswalk = v.get("crosswalk")
+    if crosswalk == "present":
+        parts.append("有人行横道")
+    elif crosswalk == "absent":
+        parts.append("未见人行横道")
+    if v.get("road_markings"):
+        parts.append("路面标线: " + "、".join(v["road_markings"]))
+    if v.get("signs"):
+        parts.append("路口标志牌: " + "、".join(v["signs"]))
+    visibility = v.get("visibility")
+    if visibility not in (None, "unknown"):
+        parts.append("天气光线: " + _VISIBILITY_LABEL.get(visibility, visibility))
+    if not parts:
+        return ""
+    text = ("路口要素（大模型看关键帧识别；看不清的项不会出现在这里）: "
+            + "；".join(parts))
+    if v.get("note"):
+        text += f"；识别依据: {v['note']}"
+    return text
 
 
 # 照片检出目标类型的中文名（YOLO 类别 → 人话）
@@ -208,6 +254,12 @@ def build_scene_summary(scene: dict | None, fallback_text: str = "",
     # 视频 + 照片的组合：照片证据作为补充要素追加在后面
     if photo_line and photo_line not in lines:
         lines.append(photo_line)
+
+    # 大模型看关键帧认出的路口要素（人行横道/标线/标志牌/天气）：属检测结果，
+    # 排在"用户陈述"之前 —— 冲突时规则要求以检测为准
+    vision_line = describe_vision(scene)
+    if vision_line and vision_line not in lines:
+        lines.append(vision_line)
 
     # 用户陈述（信号灯归属 / 指示牌 / 过错关键词）：检测认不出的部分靠它补，
     # 但标签必须带着走，不能让人误以为这是检测结果

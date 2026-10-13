@@ -135,6 +135,29 @@ class TextFacts(BaseModel):
     matched: list[str] = []                # 命中的原词，便于人工核对
 
 
+class SceneVision(BaseModel):
+    """大模型看关键帧认出的路口要素（M1 补充；模型看不见图时整块为 None）。
+
+    与 YOLO 的分工：YOLO 说"画面里有几盏灯、各自什么颜色"，但认不出**哪一盏管哪一方**
+    （多方向并存 → 只能给 mixed）；这里补的正是"面向镜头那组灯"这层归属，外加
+    人行横道、标线、标志牌这些 YOLO 类别里没有的要素。
+
+    纪律：认不出一律 unknown，不猜、不编造；整块全 unknown 时不会进 scene
+    （上游按"这次认不出"处理，退回原有模式）。
+    """
+
+    model: str = ""                  # 实际使用的模型，便于追溯是哪次配置产出的
+    frames: int = 0                  # 看了几帧
+    self_light: str = "unknown"      # 正对镜头（我方行进方向）那组信号灯：red/green/yellow
+    other_light: str = "unknown"     # 其他方向可见的信号灯
+    crosswalk: str = "unknown"       # present / absent / unknown
+    road_markings: list[str] = []    # 可见路面标线（停止线/人行横道/导向箭头…）
+    signs: list[str] = []            # 可见交通标志牌（让行/限速…）
+    road: str = "unknown"            # intersection / t_junction / roundabout / straight…
+    visibility: str = "unknown"      # day / night / dusk / rain / fog
+    note: str = ""                   # 模型给出的一句依据（可追溯、可人工核对）
+
+
 class Scene(BaseModel):
     """scene.json —— M1 输出，M3/M4 消费。"""
     scene_id: str
@@ -149,6 +172,8 @@ class Scene(BaseModel):
     photos: list[PhotoEvidence] = []
     # 从用户补充文字里提取的现场要素（信号灯归属/指示牌/过错关键词）
     text_facts: Optional[TextFacts] = None
+    # 大模型看关键帧认出的路口要素（认不出时为 None，链路退回原有模式）
+    vision: Optional[SceneVision] = None
     visibility: str = "day"
     confidence: float = 0.0  # 感知置信度
 

@@ -93,9 +93,20 @@ class Settings(BaseSettings):
     # 长视频阈值（秒）：超过此时长的视频启用 LLM 智能分段
     long_video_threshold: int = 300
     # 视频分段 LLM 模型（需要支持视频输入的多模态模型）
-    video_llm_model: str = "qwen3.5-397b-a17b"
+    # 默认给实测可用的视觉模型：网关上的 Qwen2.5-VL-32B（2026-10-13 实测能认出
+    # 信号灯/人行横道/停止线，约 3~4s/次）。填成看不见图的文本模型也不会坏 ——
+    # 场景要素识别会判定"模型不能识别"并自动退回 YOLO+HSV 的原有模式
+    video_llm_model: str = "Qwen2.5-VL-32B-Instruct"
     # 视频 LLM 调用超时（秒）：分段分析可能较慢
     video_llm_timeout_s: float = 120.0
+
+    # ========== 路口场景要素识别（大模型看关键帧） ==========
+    # 开关：关掉即完全不调用（演示现场模型抖动/超时拖慢链路时的一键退路）
+    vision_scene_enabled: bool = True
+    # 抽几帧给大模型看（帧数越多越准也越慢，实测 3~4 帧约 3~4 秒）
+    vision_scene_frames: int = 4
+    # 单次识别超时（秒）：超时即当"认不出"，退回原有模式，不拖住整条研判链路
+    vision_scene_timeout_s: float = 45.0
 
 
 settings = Settings()
