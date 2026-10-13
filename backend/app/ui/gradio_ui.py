@@ -164,9 +164,6 @@ footer { visibility: hidden !important; height: 0 !important; padding: 0 !import
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 4px 20px rgba(103, 232, 249, .25);
 }
 #rm-call-view.on { display: flex; }
-/* 对话文字显示区（虎鲸右边） */
-.call-transcript {
-    flex: 1;
 .rm-avatar { position: relative; width: 120px; height: 100px; flex: 0 0 auto; }
 .rm-ring {
     position: absolute; inset: -7px; border-radius: 50%;
