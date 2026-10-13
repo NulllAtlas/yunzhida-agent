@@ -1,9 +1,12 @@
 """主流程 API 路由（D1/D2/D7）：创建案件、查询状态、查询结果、统一提交入口。"""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
+
+logger = logging.getLogger(__name__)
 
 from app.api.tasks import task_manager
 from app.core.config import settings
@@ -98,9 +101,6 @@ async def _save_upload(
     命名：`{task_id}{tag}{suffix}`；违规（类型/大小）直接抛 ApiError 让前端看到原因，
     而不是悄悄吞掉文件让分析凭空少一份证据。
     """
-    import logging
-    logger = logging.getLogger(__name__)
-    
     try:
         name = Path(file.filename or "").name
         lower = name.lower()
