@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import json
 import time
+import itertools
 
 import gradio as gr
 import requests
@@ -23,11 +24,15 @@ import requests
 from app.core.config import settings
 from app.core.db import load_chat_history, save_chat_message
 from app.services.rag import rag_service
-from app.services.tts import synthesize
+from app.services.tts import synthesize, to_speech_text
 
 # 后端 API 地址：UI 与 API 同进程挂载时默认自调 8000；
 # 若服务换了端口，用环境变量 ROADMIND_API_BASE 覆盖，避免回调打到别的服务上
 API = os.environ.get("ROADMIND_API_BASE", "http://127.0.0.1:8000")
+
+# 浏览器兜底播报的序号：服务端合成连续失败时，同一句话连着播两次也要让
+# 组件值发生变化，前端的 change 事件才会再次触发
+_SPEAK_SEQ = itertools.count(1)
 
 _CUSTOM_CSS = """
 .hero-center { text-align: center; padding: 14px 0 6px; }
@@ -153,6 +158,9 @@ footer { visibility: hidden !important; height: 0 !important; padding: 0 !import
 .call-row { align-items: center; gap: 10px; margin: 4px 0; }
 .call-status { margin: 0 !important; font-size: 13px; color: #374151; }
 .call-status p { margin: 0; }
+/* 通话中"分段上屏"的隐藏触发键：JS 要在 DOM 里点到它才能把正在说的话
+   交给 Python 显示，所以用 CSS 藏（visible=False 的组件不渲染，点不到） */
+.rm-hidden-btn { display: none !important; }
 .voice-row .reply-audio { max-height: 52px; }
 /* 虎鲸电话视图：清澈青色海水背景 + 青黑虎鲸（js 渲染，默认隐藏） */
 #rm-call-view {
@@ -911,6 +919,26 @@ def build_demo() -> gr.Blocks:
                 inputs=[voice_on],
                 outputs=[voice_on, voice_btn],
             )
+            # 关掉播报要"立刻闭嘴"：光靠 Python 侧不再合成只保证后面不再出声，
+            # 已经出声的（浏览器本地语音 / 回复播放器里的 MP3）必须当场掐掉。
+            # 同时把开关状态广播给页面里的 JS（电话模式的语气词、
+            # window.RMSpeak 都读这个标记，否则它们会绕过开关继续说话）
+            voice_on.change(
+                fn=None, inputs=[voice_on], outputs=None,
+                js="""(on) => {
+                    window.RMVoiceOff = !on;
+                    const C = window.RMCall;
+                    if (C) C.voiceOn = on;
+                    if (!on) {
+                        if ('speechSynthesis' in window) {
+                            window.speechSynthesis.cancel();
+                        }
+                        const rep = document.querySelector('.reply-audio audio, .reply-audio video');
+                        if (rep && !rep.paused) rep.pause();
+                        if (C) C.status('🔇 语音播报已关闭');
+                    }
+                }""",
+            )
 
         # 全局共享登录态（设置界面的账号区与监控端共用）
         police_token = gr.State(None)
@@ -961,6 +989,14 @@ def build_demo() -> gr.Blocks:
                     reply_audio = gr.Audio(
                         autoplay=True, show_label=False, scale=0,
                         elem_classes="reply-audio",
+                    )
+                    # 浏览器兜底播报：服务端 TTS 合成不出音频时（现在 edge-tts
+                    # 常态 403），把要念的文本写进这个隐藏框，由前端
+                    # speechSynthesis 用本机离线中文声念 —— 演示一定有声音。
+                    # 服务端合成成功时写空串（前端只念非空值），开关关闭时不写
+                    fallback_speak = gr.Textbox(
+                        visible=False, show_label=False,
+                        elem_id="rm-speak-fallback",
                     )
                 # 通话视图：拨通后 js 在此渲染语音助手卡通形象 + 声音频率动态；
                 # 组件值恒定，js 只操作自己创建的子节点（不碰 Gradio 组件 DOM）
@@ -1141,14 +1177,14 @@ def build_demo() -> gr.Blocks:
                             if failures >= 3:
                                 _add_msg(msgs, username, {"role": "assistant",
                                        "content": f"❌ 服务不可用：{e}"})
-                                yield [*msgs], None, [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update()
+                                yield [*msgs], None, [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update(), gr.update()
                                 return
                             time.sleep(2)
                             continue
                         if r.status_code != 200:
                             _add_msg(msgs, username, {"role": "assistant",
                                        "content": "❌ 任务状态查询失败"})
-                            yield [*msgs], None, [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update()
+                            yield [*msgs], None, [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update(), gr.update()
                             return
                         info = r.json()
                         for kf in info.get("keyframes") or []:
@@ -1156,40 +1192,37 @@ def build_demo() -> gr.Blocks:
                                 seen.add(kf)
                                 _add_msg(msgs, username, _kf_bubble(
                                     kf, "📷 视频感知关键帧 · 事故车辆识别框"))
-                                yield [*msgs], None, [*msgs], gr.update(), gr.update(), gr.update(), gr.update()
+                                yield [*msgs], None, [*msgs], gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
                         status = info.get("status")
                         if status == "done":
                             result = info.get("result") or {}
                             msg = _result_message(result)
                             _add_msg(msgs, username, msg)
-                            # 检测到视频中有事故 → 先显示虎鲸助手界面，再语音播报研判结果
-                            # 顺序：1️⃣ 显示虎鲸 → 2️⃣ 进入语音对话模式 → 3️⃣ 播报结果
+                            # 判定完成：播报结论 + 结论与追问落进对话区。
+                            # 不再"自动接通电话"—— 上传一个视频就把麦克风打开、
+                            # 界面切成通话态太唐突；要不要语音对话由用户点 📞 决定
+                            # （状态行里保留这个入口的提示，不然没人知道能打）
                             j = result.get("judgment") or {}
                             acc = (j.get("accident_type") or "").strip()
                             is_accident = acc not in ("", "unknown", "非事故")
-                            
+                            call_hint = "（点 📞 可直接语音追问）"
+                            status = gr.update()
                             if is_accident:
-                                # 第一步：先显示虎鲸界面，进入语音对话模式（不立即播报）
-                                yield ([*msgs], gr.update(value=None), [*msgs],
-                                       gr.update(value=None),  # 先不播放音频
-                                       gr.update(value="📵"), True,
-                                       f"📞 检测到事故（{acc}），虎鲸助手已接通，正在播报研判结果…")
-                                
-                                # 第二步：延迟 1.5 秒让用户看到虎鲸后再播报
-                                import time
-                                time.sleep(1.5)
-                                
-                                # 第三步：开始语音播报
-                                audio = _speak(msg.get("content", ""), voice)
-                                yield ([*msgs], gr.update(value=None), [*msgs],
-                                       gr.update(value=audio),
-                                       gr.update(), gr.update(),
-                                       f"📞 正在播报研判结果（{acc}）…")
-                            else:
-                                audio = _speak(msg.get("content", ""), voice)
-                                yield ([*msgs], gr.update(value=None), [*msgs],
-                                       gr.update(value=audio),
-                                       gr.update(), gr.update(), gr.update())
+                                status = (f"⚠️ 检测到事故（{acc}）· "
+                                          + ("正在播报研判结果…" if voice
+                                             else "语音播报已关闭，结论见对话区")
+                                          + call_hint)
+                            # 文字先出、声音随后：结论气泡不能被语音合成卡住
+                            # （合成要联网），先送进对话区，合成完再补一次 yield
+                            yield ([*msgs], gr.update(value=None), [*msgs],
+                                   gr.update(value=None),
+                                   gr.update(), gr.update(), status, gr.update())
+                            audio = _speak(msg.get("content", ""), voice)
+                            yield ([*msgs], gr.update(value=None), [*msgs],
+                                   gr.update(value=audio),
+                                   gr.update(), gr.update(), gr.update(),
+                                   _speak_fallback(msg.get("content", ""), voice,
+                                                   audio))
                             # 判定里无法确认的部分：主动向用户提问，
                             # 用户在对话框直接回复，助手结合研判上下文继续分析
                             # （audio 位置 gr.update() 保持：刚设的播报不能被清掉）
@@ -1197,12 +1230,12 @@ def build_demo() -> gr.Blocks:
                             if questions:
                                 _add_msg(msgs, username,
                                          {"role": "assistant", "content": questions})
-                                yield [*msgs], None, [*msgs], gr.update(), gr.update(), gr.update(), gr.update()
+                                yield [*msgs], None, [*msgs], gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
                             return
                         if status == "failed":
                             _add_msg(msgs, username, {"role": "assistant", "content":
                                       f"❌ 分析失败：{info.get('error') or '未知原因'}"})
-                            yield [*msgs], None, [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update()
+                            yield [*msgs], None, [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update(), gr.update()
                             return
                         time.sleep(1.5)
 
@@ -1218,6 +1251,25 @@ def build_demo() -> gr.Blocks:
                         return str(path) if path else None
                     except Exception:  # noqa: BLE001
                         return None
+
+                def _speak_fallback(reply: str, on: bool, audio) -> object:
+                    """服务端合成不出音频时，把文本交给浏览器本地语音播报。
+
+                    返回兜底框的更新值：服务端有音频 → 空串（前端只念非空值）；
+                    合成失败 → 带序号的文本（序号保证同一句话连着两次也会变化，
+                    前端的 change 事件才会触发）；开关关闭 → 不动组件。
+                    """
+                    if not (on and reply):
+                        return gr.update()
+                    if audio:
+                        return ""
+                    text = to_speech_text(reply)
+                    if not text:
+                        return gr.update()
+                    return json.dumps(
+                        {"seq": next(_SPEAK_SEQ), "text": text},
+                        ensure_ascii=False,
+                    )
 
                 def respond(message, history, username, chat_state, voice,
                             call_mode: bool = False):
@@ -1243,15 +1295,20 @@ def build_demo() -> gr.Blocks:
                         yield ([*msgs,
                                 {"role": "assistant", "content": "🤔 正在思考…"}],
                                gr.update(value=None), [*msgs], gr.update(),
-                               gr.update(), gr.update(), gr.update())
+                               gr.update(), gr.update(), gr.update(), gr.update())
                         reply = chat_fn(message, _history_text(msgs), call_mode)
                         _add_msg(msgs, username, {"role": "assistant", "content": reply})
-                        # 语音对话：回复先显示，语音合成后自动播放（合成阻塞几秒，
-                        # 放在回复 yield 之后，气泡先出、声音随后）；
-                        # gr.update(value=audio) 显式替换 —— 开关关闭/合成失败时
-                        # audio=None，显式清掉播放器里上一条 MP3，不残留
+                        # 文字先出、声音随后：语音合成要联网（几百毫秒起，长文本更久），
+                        # 合成和 yield 挤在一起的话气泡会被合成卡住不显示 ——
+                        # 所以先 yield 一次把回复气泡送出去（顺带清掉上一条播报），
+                        # 合成完再补一次 yield 把音频挂上
+                        yield ([*msgs], gr.update(value=None), [*msgs],
+                               gr.update(value=None), gr.update(), gr.update(),
+                               gr.update(), gr.update())
                         audio = _speak(reply, voice)
-                        yield [*msgs], gr.update(value=None), [*msgs], gr.update(value=audio), gr.update(), gr.update(), gr.update()
+                        yield ([*msgs], gr.update(value=None), [*msgs],
+                               gr.update(value=audio), gr.update(), gr.update(),
+                               gr.update(), _speak_fallback(reply, voice, audio))
                         return
                     # 视频研判分支：先落 user 气泡与"开始分析"，感知完成后
                     # 关键帧片段进对话，done 后再补判定结论（消息随账号落库）
@@ -1259,12 +1316,12 @@ def build_demo() -> gr.Blocks:
                     _add_msg(msgs, username, {"role": "assistant", "content":
                              "📹 已收到视频，开始视频感知（YOLO 检测 + 轨迹追踪），"
                              "关键帧片段稍后反馈…"})
-                    yield [*msgs], gr.update(value=None), [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update()
+                    yield [*msgs], gr.update(value=None), [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update(), gr.update()
                     task_id = _submit_video_analysis(video, asked)
                     if not task_id:
                         _add_msg(msgs, username, {"role": "assistant",
                                  "content": "❌ 视频提交失败，请稍后重试"})
-                        yield [*msgs], gr.update(value=None), [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update()
+                        yield [*msgs], gr.update(value=None), [*msgs], gr.update(value=None), gr.update(), gr.update(), gr.update(), gr.update()
                         return
                     yield from _poll_analysis(msgs, task_id, username, voice)
 
@@ -1272,13 +1329,66 @@ def build_demo() -> gr.Blocks:
                                [msg_box, chatbot, police_username, chat_state,
                                 voice_on, call_mode],
                                [chatbot, msg_box, chat_state, reply_audio,
-                                call_btn, call_mode, call_status])
+                                call_btn, call_mode, call_status,
+                                fallback_speak])
                 # 关闭 🔊 开关时同步清空回复播放器：上一条 MP3 立即消失，
                 # 不残留在对话框（开关只切图标，不动播放器，MP3 会一直留着）
                 voice_btn.click(
                     lambda: gr.update(value=None),
                     None, [reply_audio],
                 )
+
+                # 服务端合成失败 → 浏览器本地语音兜底播报。
+                # 微软 edge-tts 在当前网络下 WS 握手常态 403（Python 侧静默降级成
+                # 无音频），演示会变成"虎鲸接通了却不出声"，所以合成不出音频时
+                # Python 把要念的文本写进隐藏框，这里交给 window.RMSpeak 念出来
+                # （音色择优逻辑与电话模式共用，定义见页面加载时的 _CALL_DEF_JS）
+                _SPEAK_JS = """(payload) => {
+                    if (!payload || !('speechSynthesis' in window)) return;
+                    let text = payload;
+                    try {
+                        const o = JSON.parse(payload);
+                        text = (o && o.text) || '';
+                    } catch (e) { /* 不是 JSON 就按纯文本念 */ }
+                    if (!text) return;
+                    if (window.RMSpeak) {
+                        window.RMSpeak(text);
+                        console.warn('[云智达] 服务端语音合成不可用，'
+                                     + '已改用浏览器本地语音播报');
+                    } else {
+                        // RMSpeak 还没注册（页面刚加载）时的最小兜底
+                        window.speechSynthesis.cancel();
+                        window.speechSynthesis.speak(
+                            new SpeechSynthesisUtterance(text));
+                    }
+                }"""
+                fallback_speak.change(
+                    fn=None, inputs=[fallback_speak], outputs=None, js=_SPEAK_JS,
+                )
+
+                # 通话中的"分段上屏"：每 2 秒把用户正在说的话显示进对话区。
+                # 分段气泡只是实时字幕 —— 不进 State、不落库、不触发助手回答
+                #（真发给助手会让队列越堆越长：实测助手回一次要 15 秒）。
+                # 触发方式是"JS 填输入框 → 点这个隐藏键"：Gradio 里 JS 改不了
+                # 组件值，只能借这条既有通道（和模拟点发送键同一招）。
+                # 用 CSS 藏而不是 visible=False —— 后者不渲染，DOM 里点不到
+                seg_btn = gr.Button("", elem_id="rm-seg-btn",
+                                    elem_classes="rm-hidden-btn")
+
+                def show_partial(text: str, chat_state: list) -> list:
+                    """把"正在说的话"显示进对话区（分段字幕），不惊动助手。
+
+                    只输出聊天区：上一次的分段气泡不在 chat_state 里，会被这次
+                    的输出整列替换掉 —— 所以字幕是原地刷新，不会一路叠一屏；
+                    用户停顿后 respond 用真实消息列表渲染，字幕自然消失。
+                    """
+                    t = (text or "").strip()
+                    if not t:
+                        return gr.update()
+                    msgs = [*chat_state] if chat_state else []
+                    return [*msgs, {"role": "user", "content": f"🎙 {t} …"}]
+
+                seg_btn.click(show_partial, [msg_box, chat_state], [chatbot])
 
                 # ---------- 电话式语音对话（像打电话：接通后直接说话） ----------
                 # 浏览器端连续录音 + 音量分句：说话时音量升高，静音超过阈值
@@ -1293,10 +1403,76 @@ def build_demo() -> gr.Blocks:
                     return (False, "📞 已挂断 — 点红色电话键重新接通",
                             gr.update(value="📞"))
 
-                # RMCall 定义块：页面加载时执行一次（提取出来以便"检测到事故
-                # 自动接通"在任何时刻都能 start —— 原来定义挂在电话键点击里，
-                # 从未点过电话键时 window.RMCall 不存在，自动接通无从启动）
+                # RMCall 定义块：页面加载时执行一次（与电话键点击分开 ——
+                # 定义挂在点击里的话，没点过电话键时 window.RMCall 不存在，
+                # 播报兜底 window.RMSpeak 与 🔊 开关广播就没处落）
                 _CALL_DEF_JS = """() => {
+                    // 浏览器本地语音播报：服务端 TTS（edge-tts）在当前网络下
+                    // WS 握手常态 403，所有需要出声的地方（回复兜底、思考期
+                    // 语气词）统一走这里，保证演示一定有声音。
+                    // 音色择优：Edge 在线自然音（Xiaoxiao Online 等）最接近
+                    // 服务端音色 → 本机离线中文声 → 系统默认
+                    if (!window.RMSpeak) {
+                        window.RMSpeak = (text) => {
+                            if (!text || !('speechSynthesis' in window)) return false;
+                            // 播报开关关着就不出声（开关要说话算数）：
+                            // 语气词走这里，光靠 Python 侧判断开关管不到它
+                            if (window.RMVoiceOff) return false;
+                            // 用户还在说话：不抢话、也不暂停采集（见 play 监听）
+                            const RMC = window.RMCall;
+                            if (RMC && RMC.stream && RMC.speaking) return false;
+                            const synth = window.speechSynthesis;
+                            const doSpeak = (tries) => {
+                                // 等音色表的那段等待里用户可能把播报关了，进门前再判一次
+                                if (window.RMVoiceOff) return;
+                                const vs = synth.getVoices() || [];
+                                const zh = vs.filter(
+                                    v => /^zh/i.test(v.lang) ||
+                                         /Chinese|Xiaoxiao|Huihui|Xiaoyi|Yunxi/i
+                                             .test(v.name));
+                                const voice = zh.find(v => /online|natural/i.test(v.name))
+                                              || zh[0] || null;
+                                // 音色表可能还没加载完：短暂等一下再念，
+                                // 免得用英文声念中文（发音会怪）
+                                if (!voice && tries > 0) {
+                                    setTimeout(() => doSpeak(tries - 1), 200);
+                                    return;
+                                }
+                                synth.cancel();
+                                const u = new SpeechSynthesisUtterance(text);
+                                if (voice) { u.voice = voice; u.lang = voice.lang; }
+                                else { u.lang = 'zh-CN'; }
+                                u.rate = 1.05;
+                                // 通话中播报会串回声：扬声器念的话被麦克风录进去，
+                                // 又当成"用户说的话"识别一遍发出去 —— 对话框里就会
+                                // 冒出助手自己说的话。念的时候挂起采集、丢缓冲，
+                                // 念完恢复；用代次号防止连播两句时前一句的 onend
+                                // 提前把麦克风放开（这里不依赖 DOM 选择器，稳）
+                                const C = window.RMCall;
+                                const gen = (window.RMSpeakGen =
+                                             (window.RMSpeakGen || 0) + 1);
+                                const inCall = !!(C && C.stream);
+                                if (inCall) {
+                                    u.onstart = () => {
+                                        C.paused = true; C.chunks = [];
+                                        C.setFace('speak');
+                                    };
+                                }
+                                const resume = () => {
+                                    if (window.RMSpeakGen !== gen) return;
+                                    if (inCall && C && C.stream) {
+                                        C.paused = false;
+                                        C.setFace('listen');
+                                    }
+                                };
+                                u.onend = resume;
+                                u.onerror = resume;
+                                synth.speak(u);
+                            };
+                            doSpeak(5);
+                            return true;
+                        };
+                    }
                     if (!window.RMCall) {
                         const C = window.RMCall = {
                             stream: null, recorder: null, analyser: null,
@@ -1388,10 +1564,27 @@ def build_demo() -> gr.Blocks:
                             const av = document.getElementById('rm-avatar');
                             if (av) av.className = 'rm-avatar ' + st;
                         };
-                        // seg=true（2 秒切段）：只转写积累不发送 —— 不打断说话、
-                        // 不触发回复播报；停顿后合并缓冲成一条完整消息再发送，
-                        // 上下文完整且不会每 2 秒压一次 LLM（此前每段都发送 +
-                        // 播报，采集大量暂停，用户的话被丢，导致"不回话"）
+                        // 分段上屏：把"到目前为止说过的话"立刻显示进对话区。
+                        // 借隐藏触发键 #rm-seg-btn —— Gradio 里 JS 改不了组件值，
+                        // 只能"填输入框 + 点按钮"（和模拟点发送键同一招）。
+                        // Python 侧只显示：不写 State、不落库、不打扰助手；
+                        // 每 2 秒换一次，是"实时字幕"而不是消息
+                        C.flash = (text) => {
+                            const ta = document.querySelector('.input-row textarea');
+                            const b = document.querySelector('#rm-seg-btn button');
+                            if (!ta || !b || !text) return;
+                            ta.value = text;
+                            ta.dispatchEvent(new Event('input', {bubbles: true}));
+                            // 和点发送键同一处理：等 Svelte 把输入框的新值收进去
+                            // 再点，否则按键读到的是上一段的值
+                            setTimeout(() => b.click(), 100);
+                        };
+                        // seg=true（2 秒切段）：并入缓冲 + 立刻上屏 —— 一口气说很久
+                        //   不换气，对话区也能每 2 秒看到自己说的话；
+                        // seg=false（停顿分句）：缓冲 + 尾巴合成一条完整消息发送。
+                        // 为什么分段不直接发给助手：实测助手回一次要 15 秒
+                        //（电话模式 short），每 2 秒压一条会让队列越堆越长、对话区
+                        //   反而越来越滞后，而且助手只看到半句话没法好好答
                         C.send = async (blob, seg) => {
                             try {
                                 const fd = new FormData();
@@ -1399,24 +1592,23 @@ def build_demo() -> gr.Blocks:
                                 const r = await fetch('/api/stt', {method: 'POST', body: fd});
                                 const j = await r.json();
                                 const text = (j && j.data && j.data.text || '').trim();
-                                if (seg) {
-                                    // 切段：转写进缓冲（≥2 字才有意义），静默续录
-                                    if (text.length >= 2) {
-                                        C.buf = (C.buf ? C.buf + ' ' : '') + text;
+                                // 转写太短（单字/标点，多为杂音误识）不处理
+                                if (!text || text.length < 2) {
+                                    C.setFace('listen');
+                                    if (!seg) {
+                                        C.status('📞 已接通 — 直接说话，停顿即自动发送');
                                     }
+                                    return;
+                                }
+                                if (seg) {
+                                    C.buf = (C.buf ? C.buf + ' ' : '') + text;
+                                    C.flash(C.buf);
                                     C.setFace('listen');
                                     return;
                                 }
                                 // 停顿分句：合并切段缓冲 → 一条完整消息发送
-                                const full = ((C.buf ? C.buf + ' ' : '')
-                                              + text).trim();
+                                const full = ((C.buf ? C.buf + ' ' : '') + text).trim();
                                 C.buf = '';
-                                // 转写太短（单字/标点，多为杂音误识）不发送
-                                if (!full || full.length < 2) {
-                                    C.setFace('listen');
-                                    C.status('📞 已接通 — 直接说话，停顿即自动发送');
-                                    return;
-                                }
                                 C.setFace('think');
                                 const ta = document.querySelector('.input-row textarea');
                                 if (!ta) return;
@@ -1430,15 +1622,28 @@ def build_demo() -> gr.Blocks:
                                     // 像真人打电话听到后的应声，不再长时间沉默；
                                     // 播报中采集自动暂停（防回声），播完自动续录；
                                     // LLM 回复到达后替换播报，思考结果紧随其后
-                                    if (C.fillers && C.fillers.length) {
+                                    if (window.RMVoiceOff) {
+                                        // 播报开关关着：语气词也是"出声"，
+                                        // 关了就一声都不应（否则关了播报还在说）
+                                    } else if (C.fillers && C.fillers.length) {
                                         const rep = document.querySelector(
-                                            '.reply-audio audio');
+                                            '.reply-audio audio, .reply-audio video');
                                         if (rep) {
                                             rep.src = C.fillers[
                                                 Math.floor(Math.random()
                                                            * C.fillers.length)];
                                             const p = rep.play();
                                             if (p && p.catch) p.catch(() => {});
+                                        }
+                                    } else {
+                                        // 服务端 TTS 不可用（edge-tts 403）时没有
+                                        // 预合成语气词，用浏览器本地语音应一声，
+                                        // 别让思考期一直静默
+                                        const says = ['嗯嗯，我在听', '好的好的',
+                                                      '让我想想哦', '嗯，我想想'];
+                                        if (window.RMSpeak) {
+                                            window.RMSpeak(says[Math.floor(
+                                                Math.random() * says.length)]);
                                         }
                                     }
                                 }, 200);
@@ -1510,9 +1715,9 @@ def build_demo() -> gr.Blocks:
                                 C.recorder.stop();
                             } else if (C.speaking
                                        && now - (C.speakStart || now) > 2000) {
-                                // 长段连续说话：每 2 秒切段只转写积累（不发消息、
-                                // 不播报、不打断说话），停顿后合并成一条完整消息
-                                // 发送 —— 上下文合适且不会每 2 秒压一次 LLM
+                                // 长段连续说话：每 2 秒切一段 —— 转写后立刻上屏
+                                //（见 C.send）：一口气说很久不换气，对话区也能
+                                // 每 2 秒看到自己说的话；真正发给助手仍是停顿后一次
                                 C.speaking = false;
                                 C.hot = 0;
                                 C.lastVoice = now;
@@ -1645,19 +1850,27 @@ def build_demo() -> gr.Blocks:
                         // 播报期间助手切"说"状态，播完回"听"
                         //（注册在定义块：每次拨号只走 start，监听不能重复挂）
                         document.addEventListener('play', (e) => {
-                            if (e.target.matches('.reply-audio audio')) {
+                            if (e.target.closest('.reply-audio')) {
+                                // 用户还在说：助手不抢话 —— 既不出声（不打断），
+                                // 也不暂停采集（暂停会把用户正说着的话整段丢掉，
+                                // 每 2 秒分段发送时最容易踩到这条）
+                                if (C.speaking) {
+                                    try { e.target.pause(); } catch (err) {}
+                                    C.status('🎤 你先说，说完我再答');
+                                    return;
+                                }
                                 C.paused = true; C.chunks = [];
                                 C.setFace('speak');
                             }
                         }, true);
                         document.addEventListener('ended', (e) => {
-                            if (e.target.matches('.reply-audio audio')) {
+                            if (e.target.closest('.reply-audio')) {
                                 C.paused = false;
                                 C.setFace('listen');
                             }
                         }, true);
                         document.addEventListener('pause', (e) => {
-                            if (e.target.matches('.reply-audio audio')) {
+                            if (e.target.closest('.reply-audio')) {
                                 C.paused = false;
                                 C.setFace('listen');
                             }
@@ -1673,7 +1886,7 @@ def build_demo() -> gr.Blocks:
                                 C.stream.getTracks().forEach((t) => t.stop());
                             }
                             // 挂断即静音：正在播报的助手语音立即停止
-                            const rep = document.querySelector('.reply-audio audio');
+                            const rep = document.querySelector('.reply-audio audio, .reply-audio video');
                             if (rep && !rep.paused) rep.pause();
                             // 关闭音频上下文：不关会随拨号次数泄漏，多次通话后失效
                             if (C.ctx) {
@@ -1698,37 +1911,14 @@ def build_demo() -> gr.Blocks:
                     if (C.stream) { C.stop(); }
                     else { C.start(); }
                 }"""
-                # 检测到事故自动接通：Python 侧把 call_mode 置 True（像真人来电），
-                # State 变化触发本 JS —— 先显示虎鲸界面，等待 1.5 秒后再播报
-                _AUTO_CALL_JS = """(m) => {
-                    const C = window.RMCall;
-                    if (!C || !m) return;
-                    if (C.stream) return;
-                    
-                    // 第一步：先显示虎鲸界面
-                    const transcriptBox = document.querySelector('.transcript-box textarea');
-                    if (transcriptBox) {
-                        const currentTime = new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'});
-                        transcriptBox.value += `[${currentTime}] 系统：检测到事故，虎鲸助手已接通\\n`;
-                        transcriptBox.value += `[${currentTime}] 系统：正在准备播报研判结果...\\n`;
-                        transcriptBox.scrollTop = transcriptBox.scrollHeight;
-                    }
-                    
-                    // 启动虎鲸动画和录音，但等待播报
-                    C.start();
-                    
-                    // 显示虎鲸界面
-                    const host = C.view();
-                    if (host) host.classList.add('on');
-                }"""
+                # 注：这里曾有一条"检测到事故自动接通电话"的 JS（Python 侧把
+                # call_mode 置 True → State 变化触发它开机采集并显示虎鲸）。
+                # 已移除：上传视频就自动打开麦克风太唐突，接不接由用户点 📞 决定
                 call_btn.click(toggle_call, [call_mode],
                                [call_mode, call_status, call_btn])
                 call_btn.click(fn=None, outputs=None, js=_CALL_JS)
-                # RMCall 定义在页面加载时注册（一次）；检测到事故自动接通：
-                # call_mode 置 True 后 State 变化触发 _AUTO_CALL_JS 启动录音
+                # RMCall 定义在页面加载时注册（一次），电话键与播报兜底都取用
                 demo.load(fn=None, inputs=None, outputs=None, js=_CALL_DEF_JS)
-                call_mode.change(fn=None, inputs=[call_mode], outputs=None,
-                                 js=_AUTO_CALL_JS)
 
                 # ---------- 语音输入（按住说话，微信式） ----------
                 # 🎤 语音输入键：按住开始录音，松开结束并自动转写发送；

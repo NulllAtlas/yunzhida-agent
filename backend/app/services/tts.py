@@ -31,6 +31,14 @@ def _strip_markdown(text: str) -> str:
     return text.strip()
 
 
+def to_speech_text(text: str) -> str:
+    """朗读用的纯文本（去 markdown 符号、URL、多余空白）。
+
+    浏览器兜底播报（speechSynthesis）也走这条清洗 —— 否则会念出星号井号。
+    """
+    return _strip_markdown(text)
+
+
 def _out_path() -> Path:
     out_dir = Path(settings.output_dir) / "tts"
     out_dir.mkdir(parents=True, exist_ok=True)
