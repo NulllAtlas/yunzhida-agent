@@ -14,17 +14,22 @@
 
 ```
 yunzhida-agent/
-├── docs/        # 作品说明书、PPT定稿、评审材料归档
-│   └── roadmind/                      # 云智达 方案/架构/分工/契约/脚本
+├── docs/        # 项目总说明 + 专题文档 + 过程归档
+│   ├── PROJECT.md                     # ★ 项目功能总说明（先看这份）
+│   └── roadmind/                      # 架构 / 判责规则 / scene 结构 / 接口契约
 ├── data/        # 案例库 / 评测集
 │   ├── cases/
 │   └── eval/
-├── backend/     # FastAPI + LangGraph 后端（perceive→retrieve→judge→respond→aggregate）
-├── frontend/    # Vue3 双端前端（车主端 / 交警端）
+├── backend/     # FastAPI + LangGraph 后端，并托管主界面
+│   └── app/ui/gradio_ui.py            # ★ 真正的双端界面（车主端对话 + 监控端工作台）
+├── frontend/    # Vue3：品牌首页 + 登录页
 ├── deploy/docs/ # 部署与运维文档（RUNBOOK）
 ├── docker-compose.yml # 一键容器化部署（api + 前端静态）
 └── .env.example # 环境变量模板（真实.env绝不提交）
 ```
+
+> 注意：**主界面不在 Vue 里**。`:8000/` 由后端 Gradio 工作台托管（车主端 + 监控端都在这一页），
+> Vue 前端只保留品牌首页与登录页。
 
 演示视频、大文件走群文件/网盘，**不要提交到本仓库**。
 
@@ -38,6 +43,9 @@ cp .env.example .env   # 然后把群里发的真实 Key 填进 .env
 
 后端启动见 `backend/README.md`。MVP 默认 mock，无需凭据即可跑通。
 
+**主界面在 `http://localhost:8000`**（后端托管的 Gradio 工作台：车主端对话 + 监控端，
+视频/照片/文字上传与研判、语音对话都在这里）；Vue 前端（`:8080`）只有首页与登录页。
+
 容器化一键启动（需 Docker）：
 
 ```bash
@@ -46,21 +54,26 @@ docker compose up --build   # 前端 http://localhost:8080 ，后端 http://loca
 
 ## 文档索引（云智达）
 
-| 文档 | 内容 | 产出自 |
-| --- | --- | --- |
-| `docs/roadmind/REQUIREMENTS.md` | 需求与主流程（Day1） | P1 |
-| `docs/roadmind/ARCHITECTURE.md` | 多智能体架构设计 | P1/P2 |
-| `docs/roadmind/TEAM-ROLES.md` | 分工与 11 天排期 | P1 |
-| `docs/roadmind/TEAM-WORKFLOW.md` | 个人任务流程 | P1 |
-| `docs/roadmind/FEASIBILITY.md` | 可行性评估 | P1 |
-| `docs/roadmind/RULES.md` | 8 类事故规则清单（Day2） | P1 |
-| `docs/roadmind/CASES.md` | 典型案例判例库索引（Day3） | P1 |
-| `docs/roadmind/RESPONSE-TEMPLATE.md` | 应急步骤标准模板（Day5） | P1 |
-| `docs/roadmind/API.md` | 后端接口契约 | P2 |
-| `docs/roadmind/SCENE-SCHEMA.md` | scene.json 结构 | P3 |
-| `docs/roadmind/CONTRACTS.md` | judgment/response 契约 | P2+P3 |
-| `docs/roadmind/P1-TODO.md` | P1 每日工作清单 | P1 |
-| `deploy/docs/RUNBOOK.md` | 后端部署 / 换模型 / 加规则 / 排障 | P2 |
+**先看** [`docs/PROJECT.md`](docs/PROJECT.md) —— 项目功能总说明：能做什么、怎么跑、
+能力边界与演示禁区（含"哪些功能默认不生效"，写材料前务必对照）。
+
+专题文档：
+
+| 文档 | 内容 |
+| --- | --- |
+| `docs/roadmind/ARCHITECTURE.md` | 多智能体架构设计与感知能力缺口 |
+| `docs/roadmind/SCENE-SCHEMA.md` | `scene.json` 结构与降级规则 |
+| `docs/roadmind/RULES.md` | 事故判责规则清单与实现状态 |
+| `docs/roadmind/RESPONSE-TEMPLATE.md` | 应急步骤标准模板 |
+| `docs/roadmind/CASES.md` | 案例库索引 |
+| `docs/roadmind/API.md` | 后端接口契约 |
+| `docs/VOICE_CHAT_GUIDE.md` | 实时语音对话（电话模式）实现与协议 |
+| `docs/VOICE_TROUBLESHOOTING.md` | 语音电话排障 |
+| `docs/NEW_FEATURES_GUIDE.md` | 语音 / 长视频分段功能的配置与用法 |
+| `deploy/docs/RUNBOOK.md` | 部署 / 换模型 / 加规则 / 排障 |
+
+过程归档（赛前规划，其中排期已作废）：`docs/roadmind/` 下 `REQUIREMENTS.md`、
+`FEASIBILITY.md`、`TEAM-ROLES.md`、`TEAM-WORKFLOW.md`。
 
 ## 协作约定
 

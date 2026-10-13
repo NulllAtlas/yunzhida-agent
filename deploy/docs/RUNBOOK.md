@@ -3,8 +3,8 @@
 > 适用版本：backend v0.2.0（D1–D11 完成态）
 > 目标：任何人拿到仓库后，能在 5 分钟内把服务跑起来、换模型、加规则、排障。
 
-> 相关文档：[P2 交付备忘](../../docs/roadmind/P2-DELIVERY-NOTES.md)（完成度 / 口径 / 剩余待办）·
-> [API 契约](../../docs/roadmind/API.md) · [数据结构契约](../../docs/roadmind/CONTRACTS.md) ·
+> 相关文档：[项目总说明](../../docs/PROJECT.md)（功能与能力边界）·
+> [API 契约](../../docs/roadmind/API.md) · [scene 结构](../../docs/roadmind/SCENE-SCHEMA.md) ·
 > [任务分工](../../docs/roadmind/TEAM-WORKFLOW.md)
 
 ---
@@ -137,7 +137,7 @@ python scripts/index_rules.py --dir ../data/cases    # 把 data/cases/*.md 解�
 - [x] 源码：`backend/app/**`（鉴权 / 任务管理 / 多智能体链路 / 路由）
 - [x] 依赖：`backend/requirements.txt` 固定版本
 - [x] 数据：`data/cases/*.md` 案例（RAG 入库）、`data/eval/eval_v1.json` 评测集
-- [x] 接口文档：`docs/roadmind/API.md`、`docs/roadmind/CONTRACTS.md`
+- [x] 接口文档：`docs/roadmind/API.md`、`docs/roadmind/SCENE-SCHEMA.md`
 - [x] 部署：`docker-compose.yml` + `backend/Dockerfile` + `frontend/Dockerfile`
 - [x] 测试：`cd backend && pytest`（16 项，覆盖主链路 / 鉴权 / WS / RAG 回归）
 - [x] 演示说明：本 RUNBOOK
