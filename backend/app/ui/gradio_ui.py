@@ -1426,11 +1426,17 @@ def build_demo() -> gr.Blocks:
                                 // 等音色表的那段等待里用户可能把播报关了，进门前再判一次
                                 if (window.RMVoiceOff) return;
                                 const vs = synth.getVoices() || [];
-                                const zh = vs.filter(
-                                    v => /^zh/i.test(v.lang) ||
-                                         /Chinese|Xiaoxiao|Huihui|Xiaoyi|Yunxi/i
+                                // 优先选择普通话语音（zh-CN），排除粤语（zh-HK）和台语（zh-TW）
+                                const zhCN = vs.filter(
+                                    v => v.lang === 'zh-CN' || v.lang.startsWith('zh-CN') ||
+                                         /Chinese (Mandarin)|Xiaoxiao|Huihui|Xiaoyi|Yunxi/i
                                              .test(v.name));
+                                // 兜底：如果没有 zh-CN 语音，再使用所有中文语音
+                                const zh = zhCN.length > 0 ? zhCN : vs.filter(
+                                    v => /^zh/i.test(v.lang) && !v.lang.startsWith('zh-HK')
+                                         && !v.lang.startsWith('zh-TW'));
                                 const voice = zh.find(v => /online|natural/i.test(v.name))
+                                              || zh.find(v => /Mandarin|Chinese/i.test(v.name))
                                               || zh[0] || null;
                                 // 音色表可能还没加载完：短暂等一下再念，
                                 // 免得用英文声念中文（发音会怪）
@@ -1440,8 +1446,9 @@ def build_demo() -> gr.Blocks:
                                 }
                                 synth.cancel();
                                 const u = new SpeechSynthesisUtterance(text);
-                                if (voice) { u.voice = voice; u.lang = voice.lang; }
-                                else { u.lang = 'zh-CN'; }
+                                if (voice) { u.voice = voice; }
+                                // 强制使用普通话，确保不用粤语或台语
+                                u.lang = 'zh-CN';
                                 u.rate = 1.05;
                                 // 通话中播报会串回声：扬声器念的话被麦克风录进去，
                                 // 又当成"用户说的话"识别一遍发出去 —— 对话框里就会

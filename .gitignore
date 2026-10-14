@@ -51,6 +51,3 @@ data/chroma/*
 
 # 后端运行时产物（数据库 + 上传件）
 backend/data/
-
-# 临时验证脚本
-backend/_verify_gate2_tmp.py

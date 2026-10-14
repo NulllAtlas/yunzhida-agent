@@ -67,7 +67,7 @@ export function clearSession(): void {
   localStorage.removeItem(USER_KEY)
 }
 
-/** 供需要鉴权的接口使用（交警端 /api/police/* 走 Depends(require_role("police"))）。 */
+/** 供需要鉴权的接口使用（监控端/api/police/* 走 Depends(require_role("police"))）。 */
 export function authHeaders(): Record<string, string> {
   const token = getToken()
   return token ? { Authorization: `Bearer ${token}` } : {}

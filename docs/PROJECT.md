@@ -66,7 +66,7 @@ perceive ──> retrieve ──> accident_gate ──┬──> judge   ──�
 | 服务 | `fastapi` 0.142 + uvicorn；SQLite 落库（案件、时间线、聊天记录） |
 | 交互 | Gradio 6 工作台（`:8000/`，主界面）；Vue3（品牌首页 + 登录页）；WebSocket 双端推送 |
 | 语音 | `SenseVoice`/`faster-whisper` 转写 + `edge-tts` 合成 + 浏览器本地语音兜底 |
-| 部署 | `docker-compose.yml`（api + web 两个服务 + 数据卷）、`deploy/docs/RUNBOOK.md` |
+| 部署 | `docker-compose.yml`（api + web 两个服务 + 数据卷）；后端镜像自带 `HEALTHCHECK` |
 
 ## 4. 功能清单（当前代码里真有的）
 
@@ -108,11 +108,11 @@ yunzhida-agent/
 │   │   ├── services/        # 感知、LLM、RAG、STT、TTS、视频分段、路口要素识别
 │   │   └── ui/gradio_ui.py  # 主界面（车主端对话 + 监控端工作台 + 通话视图）
 │   ├── tests/               # 128 项 pytest
+│   ├── scripts/index_rules.py  # chromadb 法条/案例入库脚本
 │   └── run_dev.bat          # 本地起后端
 ├── frontend/                # Vue3：品牌首页 + 登录页（+ 实时语音组件）
-├── docs/                    # 本文件 + roadmind/ 专题文档
+├── docs/PROJECT.md          # 本文件（仓库唯一文档）
 ├── data/                    # 案例库（10 篇）、评测集（10 场景）
-├── deploy/docs/RUNBOOK.md   # 运维手册
 ├── docker-compose.yml
 └── .env.example             # 环境变量模板（真实 .env 绝不提交）
 ```
@@ -217,25 +217,24 @@ LLM 判定与规则兜底实际都只覆盖 **追尾 / 普通碰撞 / 单方撞�
 - 跑法：`cd backend && pytest -q`。
 - 约定：新增能力要带负例测试（异常/降级路径），不能只测顺利路径。
 
-## 10. 文档索引
+## 10. 文档与信息源
 
-| 文档 | 覆盖 | 状态 |
-| --- | --- | --- |
-| **`docs/PROJECT.md`（本文件）** | 项目总说明：功能、架构、跑法、边界 | ✅ 与代码同步（2026-10-14） |
-| `docs/roadmind/SCENE-SCHEMA.md` | `scene.json` 字段与降级规则 | ⚠️ 待补 `vision` 字段与 `events[].boxes` |
-| `docs/roadmind/RULES.md` | 判责规则与实现状态 | ✅ |
-| `docs/roadmind/RESPONSE-TEMPLATE.md` | 应急步骤模板 | ✅ |
-| `docs/roadmind/CASES.md` | 案例库索引 | ✅ |
-| `docs/roadmind/API.md` | 后端接口契约 | ⚠️ 缺语音/对话/配置等新接口，`GET /` 与超时默认值已过时 |
-| `docs/VOICE_CHAT_GUIDE.md` | 实时语音对话协议与实现 | ✅ |
-| `docs/VOICE_TROUBLESHOOTING.md` | 语音电话排障 | ✅ |
-| `deploy/docs/RUNBOOK.md` | 部署、换模型、加规则、排障 | ⚠️ 测试数与接口清单待更新 |
-| `backend/README.md` / `frontend/README.md` | 各端开发说明 | ⚠️ 目录与接口清单待更新 |
+仓库**只保留两份文档**（`README.md` 与本文件），其余一律以代码为准：
 
-> **仓库只保留代码需要的文档。** 已删除的 12 份（赛前规划、分工排期、需求、可行性、
-> 架构方案、PPT 大纲，以及描述已移除功能的说明），需要时可从 git 历史取回：
-> `docs/README.md`、`ACCIDENT_VOICE_CHAT_CHECK.md`、`ORCA_TRANSCRIPT_FEATURE.md`、
-> `NEW_FEATURES_PPT_OUTLINE.md`、`NEW_FEATURES_GUIDE.md`、
-> `roadmind/CONTRACTS.md`、`roadmind/P1-TODO.md`、`roadmind/REQUIREMENTS.md`、
-> `roadmind/FEASIBILITY.md`、`roadmind/TEAM-ROLES.md`、`roadmind/TEAM-WORKFLOW.md`、
-> `roadmind/ARCHITECTURE.md`（架构内容见本文件 §3）。
+| 想知道什么 | 去哪看 |
+| --- | --- |
+| 能做什么、怎么跑、边界在哪 | **本文件**（§4 功能清单 / §6 跑法 / §8 边界） |
+| 仓库总览、结构、协作约定 | `README.md` |
+| 接口契约（最新最准） | `http://localhost:8000/docs`（FastAPI 自动生成的 OpenAPI）；离线读 `backend/app/api/routers/` |
+| 判责规则实际实现 | `backend/app/algo/rule_judge.py` + `accident_gate.py` |
+| `scene` 字段与降级规则 | `backend/app/schemas/models.py` |
+| 应急步骤模板 | `backend/app/graph/nodes/respond.py` |
+| 案例库内容 | `data/cases/*.md`（10 篇，RAG 入库源） |
+| 语音链路 | `backend/app/api/routers/voice_chat.py` + `frontend/src/components/RealtimeVoiceChat.vue` |
+| 部署与排障 | `docker-compose.yml`、两个 `Dockerfile`、`backend/.env.example` |
+
+> 已从仓库移除的文档——赛前规划、需求/可行性、架构方案、PPT 大纲、分工排期，
+> 以及 `roadmind/` 专题文档（API / RULES / CASES / SCENE-SCHEMA / RESPONSE-TEMPLATE）、
+> `VOICE_CHAT_GUIDE.md`、`VOICE_TROUBLESHOOTING.md`、`deploy/docs/RUNBOOK.md`、
+> 两端 `README.md`——需要时可从 git 历史取回。
+

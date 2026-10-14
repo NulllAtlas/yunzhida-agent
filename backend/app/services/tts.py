@@ -15,7 +15,8 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 中文女声（晓晓），自然度好且免费
+# 普通话女声（晓晓），自然度好且免费
+# 注意：不要使用 zh-HK 开头的粤语声音
 _VOICE = "zh-CN-XiaoxiaoNeural"
 
 # 朗读上限：过长文本合成慢且播放冗长，截断到这个字符数
